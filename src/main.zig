@@ -12,6 +12,19 @@ const slog = sokol.log;
 var manager = std.heap.GeneralPurposeAllocator(.{}){};
 const allocator = manager.allocator();
 
+const AABB = struct {
+    // top left
+    tl: zm.Vec = zm.f32x4s(0),
+    // bottom right
+    br: zm.Vec = zm.f32x4s(0),
+
+    const Self = @This();
+
+    pub fn contains(self: Self, point: zm.Vec) bool {
+        return if (point[0] > self.tl[0] and point[0] < self.br[0] and point[1] > self.br[1] and point[1] < self.tl[1]) true else false;
+    }
+};
+
 const Suit = enum {
     hearts,
     clubs,
@@ -36,14 +49,18 @@ const EntityData = union(EntityType) {
     hand: struct { cards: ArrayList(EntityData) },
 };
 
-const Entity = struct { texture: sg.Image = .{}, position: zm.Vec = zm.f32x4(0.0, 0.0, 0.0, 0.0), rotation: f32 = 0.0, size: zm.Vec = zm.f32x4(1.0, 1.0, 1.0, 1.0), data: EntityData };
+const Entity = struct {
+    texture: sg.Image = .{},
+    // the best solution is to generate the AABB off of the size
+    collider: AABB = .{},
+    position: zm.Vec = zm.f32x4s(0),
+    rotation: f32 = 0,
+    size: zm.Vec = zm.f32x4s(1),
+    data: EntityData,
+};
 
 const State = struct {
-    gfx: struct {
-        bind: sg.Bindings = .{},
-        pip: sg.Pipeline = .{},
-        pass_action: sg.PassAction = .{},
-    } = .{},
+    gfx: struct { bind: sg.Bindings = .{}, pip: sg.Pipeline = .{}, pass_action: sg.PassAction = .{}, projection: zm.Mat = zm.identity() } = .{},
     world: struct {
         entities: ArrayList(Entity) = ArrayList(Entity).init(allocator),
     } = .{},
@@ -58,10 +75,10 @@ export fn init() void {
     });
 
     state.gfx.bind.vertex_buffers[0] = sg.makeBuffer(.{ .data = sg.asRange(&[_]f32{
-        -1, 1,  0.5, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0,
-        1,  1,  0.5, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0,
-        -1, -1, 0.5, 1.0, 1.0, 1.0, 1.0, 0.0, 1.0,
-        1,  -1, 0.5, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0,
+        -1, 1,  0.5, 1, 1, 1, 1, 0, 1,
+        1,  1,  0.5, 1, 1, 1, 1, 1, 1,
+        -1, -1, 0.5, 1, 1, 1, 1, 0, 0,
+        1,  -1, 0.5, 1, 1, 1, 1, 1, 0,
     }) });
 
     state.gfx.bind.index_buffer = sg.makeBuffer(.{
@@ -69,18 +86,19 @@ export fn init() void {
         .data = sg.asRange(&[_]u16{ 0, 1, 2, 1, 2, 3 }),
     });
 
-    var image_src: zstbi.Image = zstbi.Image.loadFromFile("./assets/bpfp.png", 4) catch unreachable;
+    var image_src: zstbi.Image = zstbi.Image.loadFromFile("/home/voxal/code/cards/assets/bpfp-steam.png", 4) catch unreachable;
 
     var image_desc: sg.ImageDesc = .{ .width = 16, .height = 16 };
     image_desc.data.subimage[0][0] = sg.asRange(image_src.data);
     state.gfx.bind.fs_images[0] = sg.makeImage(image_desc);
+    zstbi.Image.deinit(&image_src);
 
     const shd = sg.makeShader(glShaderDesc());
 
     var pip_desc: sg.PipelineDesc = .{
         .index_type = .UINT16,
         .shader = shd,
-        .blend_color = .{ .r = 1.0, .g = 0.0, .b = 0.0, .a = 1.0 },
+        .blend_color = .{ .r = 1, .g = 0, .b = 0, .a = 1 },
     };
     pip_desc.layout.attrs[0].format = .FLOAT3;
     pip_desc.layout.attrs[1].format = .FLOAT4;
@@ -99,46 +117,96 @@ export fn init() void {
 
     state.world.entities.append(Entity{
         .texture = state.gfx.bind.fs_images[0],
-        .position = zm.f32x4(1.0, 0.0, 0.0, 0.0),
-        .rotation = std.math.pi * 0.25,
-        .size = zm.f32x4(2.0, 2.0, 0.0, 0.0),
-        .data = .{ .card = .{
-            .id = .{ .suit = Suit.hearts, .rank = 2 },
-        } },
+        .collider = .{ .tl = zm.f32x4(-1, 1, 0, 0), .br = zm.f32x4(1, -1, 0, 0) },
+        .position = zm.f32x4s(0),
+        .rotation = 0,
+        .size = zm.f32x4(2, 2, 0, 0),
+        .data = .{
+            .card = .{
+                .id = .{ .suit = Suit.hearts, .rank = 2 },
+            },
+        },
     }) catch unreachable;
+
+    state.gfx.projection = zm.perspectiveFovRhGl(0.5 * std.math.pi, sapp.widthf() / sapp.heightf(), 0.1, 1);
 }
 
 export fn frame() void {
-    const projection = zm.perspectiveFovRhGl(0.5 * std.math.pi, sapp.widthf() / sapp.heightf(), 0.1, 100.0);
-    // const view = zm.lookAtRh(zm.f32x4(0.0, 0.0, 0.0, 0.0), zm.f32x4(0.0, 0.0, 0.0, 0.0), zm.f32x4(0.0, 1.0, 0.0, 0.0));
-    // const projection = zm.perspectiveFovRhGl(std.math.pi * 0.5, sapp.widthf() / sapp.heightf(), 0.1, 10.0);
+    // state.world.entities.items[0].position[0] += 0.01;
     sg.beginDefaultPass(state.gfx.pass_action, sapp.width(), sapp.height());
     sg.applyPipeline(state.gfx.pip);
     sg.applyBindings(state.gfx.bind);
     for (state.world.entities.items) |entity| {
-        renderEntity(entity, projection);
+        renderEntity(entity);
     }
     sg.endPass();
     sg.commit();
 }
 
-fn renderEntity(entity: Entity, projection: zm.Mat) void {
+fn perspectiveDivision(vec: zm.Vec) zm.Vec {
+    return zm.f32x4(vec[0] / vec[3], vec[1] / vec[3], vec[2] / vec[3], vec[3]);
+}
+
+fn screenToWorld(model: zm.Mat, point: zm.Vec) zm.Vec {
+    const point_to_view = zm.mul(point, zm.inverse(state.gfx.projection));
+    const view = zm.lookAtRh(
+        zm.f32x4(0, 0, 10, 1),
+        zm.f32x4(0, 0, 0, 1),
+        zm.f32x4(0, 1, 0, 0),
+    );
+
+    const view_to_object = zm.mul(point_to_view, zm.inverse(view));
+    const object = zm.mul(view_to_object, zm.scaling(0.5, 0.5, 1));
+
+    // std.debug.print("p2v: {any}\nv2o: {any}\nobj: {any}\n====\n", .{ point_to_view, view_to_object, object });
+
+    const object_to_view = zm.mul(model, view);
+    const mvp = zm.mul(object_to_view, state.gfx.projection);
+    std.debug.print("{any}\n", .{mvp});
+    // const pvm = zm.inverse(mvp);
+
+    return object;
+}
+
+// If we need to figure out where the vertices land for click interaction, we might as well do the matrix multiplication on the zig side
+fn renderEntity(entity: Entity) void {
+    if (entity.texture.id != state.gfx.bind.fs_images[0].id) {
+        state.gfx.bind.fs_images[0] = entity.texture;
+        sg.applyBindings(state.gfx.bind);
+    }
+
     var model = zm.scalingV(entity.size);
 
     model = zm.mul(model, zm.rotationZ(entity.rotation));
     model = zm.mul(model, zm.translationV(entity.position));
 
     const view = zm.lookAtRh(
-        zm.f32x4(0.0, 0.0, 10.0, 1.0),
-        zm.f32x4(0.0, 0.0, 0.0, 1.0),
-        zm.f32x4(0.0, 1.0, 0.0, 0.0),
+        zm.f32x4(0, 0, 10, 1),
+        zm.f32x4(0, 0, 0, 1),
+        zm.f32x4(0, 1, 0, 0),
     );
 
     const object_to_view = zm.mul(model, view);
-    const mvp = zm.mul(object_to_view, projection);
+    const mvp = zm.mul(object_to_view, state.gfx.projection);
 
     sg.applyUniforms(.VS, 0, sg.asRange(&.{ .mvp = zm.matToArr((mvp)) }));
     sg.draw(0, 6, 1);
+}
+
+export fn input(ev: ?*const sapp.Event) void {
+    const event = ev.?;
+    switch (event.type) {
+        .MOUSE_DOWN => {
+            std.debug.print("({d}, {d})\n", .{
+                2 * (event.mouse_x / sapp.widthf()) - 1,
+                -(2 * (event.mouse_y / sapp.heightf()) - 1),
+            });
+        },
+        .RESIZED => {
+            state.gfx.projection = zm.perspectiveFovRhGl(0.5 * std.math.pi, sapp.widthf() / sapp.heightf(), 0.1, 100);
+        },
+        else => {},
+    }
 }
 
 export fn cleanup() void {
@@ -148,11 +216,12 @@ export fn cleanup() void {
 
 pub fn main() !void {
     zstbi.init(allocator);
+    zstbi.setFlipVerticallyOnLoad(true);
 
     sapp.run(.{
         .init_cb = init,
         .frame_cb = frame,
-        // .event_cb = input,
+        .event_cb = input,
         .cleanup_cb = cleanup,
         .width = 800,
         .height = 600,
