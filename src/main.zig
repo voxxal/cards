@@ -59,10 +59,23 @@ const Entity = struct {
     data: EntityData,
 };
 
+const Mouse = struct {
+    position: zm.Vec = zm.f32x4s(0),
+    holding: ?*Entity = null,
+};
+
 const State = struct {
-    gfx: struct { bind: sg.Bindings = .{}, pip: sg.Pipeline = .{}, pass_action: sg.PassAction = .{}, projection: zm.Mat = zm.identity() } = .{},
+    gfx: struct {
+        bind: sg.Bindings = .{},
+        pip: sg.Pipeline = .{},
+        pass_action: sg.PassAction = .{},
+        projection: zm.Mat = zm.identity(),
+    } = .{},
     world: struct {
         entities: ArrayList(Entity) = ArrayList(Entity).init(allocator),
+    } = .{},
+    input: struct {
+        mouse: Mouse = .{},
     } = .{},
 };
 
@@ -75,10 +88,10 @@ export fn init() void {
     });
 
     state.gfx.bind.vertex_buffers[0] = sg.makeBuffer(.{ .data = sg.asRange(&[_]f32{
-        -1, 1,  0.5, 1, 1, 1, 1, 0, 1,
-        1,  1,  0.5, 1, 1, 1, 1, 1, 1,
-        -1, -1, 0.5, 1, 1, 1, 1, 0, 0,
-        1,  -1, 0.5, 1, 1, 1, 1, 1, 0,
+        -0.5, 0.5,  0.5, 1, 1, 1, 1, 0, 1,
+        0.5,  0.5,  0.5, 1, 1, 1, 1, 1, 1,
+        -0.5, -0.5, 0.5, 1, 1, 1, 1, 0, 0,
+        0.5,  -0.5, 0.5, 1, 1, 1, 1, 1, 0,
     }) });
 
     state.gfx.bind.index_buffer = sg.makeBuffer(.{
@@ -117,10 +130,11 @@ export fn init() void {
 
     state.world.entities.append(Entity{
         .texture = state.gfx.bind.fs_images[0],
-        .collider = .{ .tl = zm.f32x4(-1, 1, 0, 0), .br = zm.f32x4(1, -1, 0, 0) },
+        //TODO update bounding box on move
+        .collider = .{ .tl = zm.f32x4(-100, 100, 0, 0), .br = zm.f32x4(100, -100, 0, 0) },
         .position = zm.f32x4s(0),
         .rotation = 0,
-        .size = zm.f32x4(2, 2, 0, 0),
+        .size = zm.f32x4(200, 200, 0, 0),
         .data = .{
             .card = .{
                 .id = .{ .suit = Suit.hearts, .rank = 2 },
@@ -128,7 +142,7 @@ export fn init() void {
         },
     }) catch unreachable;
 
-    state.gfx.projection = zm.perspectiveFovRhGl(0.5 * std.math.pi, sapp.widthf() / sapp.heightf(), 0.1, 1);
+    state.gfx.projection = zm.orthographicRhGl(sapp.widthf(), sapp.heightf(), -1, 100);
 }
 
 export fn frame() void {
@@ -141,10 +155,6 @@ export fn frame() void {
     }
     sg.endPass();
     sg.commit();
-}
-
-fn perspectiveDivision(vec: zm.Vec) zm.Vec {
-    return zm.f32x4(vec[0] / vec[3], vec[1] / vec[3], vec[2] / vec[3], vec[3]);
 }
 
 fn screenToWorld(model: zm.Mat, point: zm.Vec) zm.Vec {
@@ -175,19 +185,12 @@ fn renderEntity(entity: Entity) void {
         sg.applyBindings(state.gfx.bind);
     }
 
-    var model = zm.scalingV(entity.size);
+    var model = zm.translationV(entity.position);
 
     model = zm.mul(model, zm.rotationZ(entity.rotation));
-    model = zm.mul(model, zm.translationV(entity.position));
+    model = zm.mul(model, zm.scalingV(entity.size));
 
-    const view = zm.lookAtRh(
-        zm.f32x4(0, 0, 10, 1),
-        zm.f32x4(0, 0, 0, 1),
-        zm.f32x4(0, 1, 0, 0),
-    );
-
-    const object_to_view = zm.mul(model, view);
-    const mvp = zm.mul(object_to_view, state.gfx.projection);
+    const mvp = zm.mul(model, state.gfx.projection);
 
     sg.applyUniforms(.VS, 0, sg.asRange(&.{ .mvp = zm.matToArr((mvp)) }));
     sg.draw(0, 6, 1);
@@ -197,13 +200,37 @@ export fn input(ev: ?*const sapp.Event) void {
     const event = ev.?;
     switch (event.type) {
         .MOUSE_DOWN => {
-            std.debug.print("({d}, {d})\n", .{
-                2 * (event.mouse_x / sapp.widthf()) - 1,
-                -(2 * (event.mouse_y / sapp.heightf()) - 1),
-            });
+            // std.debug.print("screen: ({d}, {d})\n", .{
+            //     2 * (event.mouse_x / sapp.widthf()) - 1,
+            //     -(2 * (event.mouse_y / sapp.heightf()) - 1),
+            // });
+            // std.debug.print("world: ({d}, {d})", .{ event.mouse_x - sapp.widthf() / 2, event.mouse_y - sapp.heightf() / 2 });
+            // Check for entities that are under the cursor, taking the first one found
+            // TODO make some z buffer so i can properly order the entities
+            if (event.mouse_button == .LEFT) {
+                for (state.world.entities.items, 0..) |entity, i| {
+                    if (entity.collider.contains(state.input.mouse.position)) {
+                        state.input.mouse.holding = &state.world.entities.items[i];
+                        break;
+                    }
+                }
+            }
+        },
+
+        .MOUSE_UP => {
+            if (event.mouse_button == .LEFT) {
+                state.input.mouse.holding = null;
+            }
+        },
+        .MOUSE_MOVE => {
+            state.input.mouse.position = zm.f32x4(event.mouse_x - sapp.widthf() / 2, -(event.mouse_y - sapp.heightf() / 2), 0, 0);
+            if (state.input.mouse.holding) |holding| {
+                holding.*.position[0] += event.mouse_dx / 120;
+                holding.*.position[1] += -event.mouse_dy / 120;
+            }
         },
         .RESIZED => {
-            state.gfx.projection = zm.perspectiveFovRhGl(0.5 * std.math.pi, sapp.widthf() / sapp.heightf(), 0.1, 100);
+            state.gfx.projection = zm.orthographicRhGl(sapp.widthf(), sapp.heightf(), -1, 100);
         },
         else => {},
     }
