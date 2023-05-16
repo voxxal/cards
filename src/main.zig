@@ -51,7 +51,6 @@ const EntityData = union(EntityType) {
 
 const Entity = struct {
     texture: sg.Image = .{},
-    // the best solution is to generate the AABB off of the size
     collider: AABB = .{},
     position: zm.Vec = zm.f32x4s(0),
     rotation: f32 = 0,
@@ -61,7 +60,9 @@ const Entity = struct {
 
 const Mouse = struct {
     position: zm.Vec = zm.f32x4s(0),
-    holding: ?*Entity = null,
+    dragging: ?*Entity = null,
+    drag_start: zm.Vec = zm.f32x4s(0),
+    drag_entity_start: zm.Vec = zm.f32x4s(0),
 };
 
 const State = struct {
@@ -78,6 +79,10 @@ const State = struct {
         mouse: Mouse = .{},
     } = .{},
 };
+
+fn cloneVec(vec: zm.Vec) zm.Vec {
+    return zm.f32x4(vec[0], vec[1], vec[2], vec[3]);
+}
 
 var state: State = .{};
 
@@ -150,7 +155,9 @@ export fn frame() void {
     sg.beginDefaultPass(state.gfx.pass_action, sapp.width(), sapp.height());
     sg.applyPipeline(state.gfx.pip);
     sg.applyBindings(state.gfx.bind);
-    for (state.world.entities.items) |entity| {
+    for (state.world.entities.items, 0..) |entity, i| {
+        state.world.entities.items[i].collider.tl = zm.f32x4(-(entity.size[0] / 2) + entity.position[0], entity.size[0] / 2 + entity.position[1], 0, 0);
+        state.world.entities.items[i].collider.br = zm.f32x4(entity.size[0] / 2 + entity.position[0], -(entity.size[0] / 2) + entity.position[1], 0, 0);
         renderEntity(entity);
     }
     sg.endPass();
@@ -185,10 +192,10 @@ fn renderEntity(entity: Entity) void {
         sg.applyBindings(state.gfx.bind);
     }
 
-    var model = zm.translationV(entity.position);
+    var model = zm.scalingV(entity.size);
 
     model = zm.mul(model, zm.rotationZ(entity.rotation));
-    model = zm.mul(model, zm.scalingV(entity.size));
+    model = zm.mul(model, zm.translationV(entity.position));
 
     const mvp = zm.mul(model, state.gfx.projection);
 
@@ -196,6 +203,7 @@ fn renderEntity(entity: Entity) void {
     sg.draw(0, 6, 1);
 }
 
+// TODO Find point relative to entity to anchor cursor to
 export fn input(ev: ?*const sapp.Event) void {
     const event = ev.?;
     switch (event.type) {
@@ -210,7 +218,9 @@ export fn input(ev: ?*const sapp.Event) void {
             if (event.mouse_button == .LEFT) {
                 for (state.world.entities.items, 0..) |entity, i| {
                     if (entity.collider.contains(state.input.mouse.position)) {
-                        state.input.mouse.holding = &state.world.entities.items[i];
+                        state.input.mouse.dragging = &state.world.entities.items[i];
+                        state.input.mouse.drag_start = cloneVec(state.input.mouse.position);
+                        state.input.mouse.drag_entity_start = cloneVec(entity.position);
                         break;
                     }
                 }
@@ -219,14 +229,15 @@ export fn input(ev: ?*const sapp.Event) void {
 
         .MOUSE_UP => {
             if (event.mouse_button == .LEFT) {
-                state.input.mouse.holding = null;
+                state.input.mouse.dragging = null;
             }
         },
         .MOUSE_MOVE => {
             state.input.mouse.position = zm.f32x4(event.mouse_x - sapp.widthf() / 2, -(event.mouse_y - sapp.heightf() / 2), 0, 0);
-            if (state.input.mouse.holding) |holding| {
-                holding.*.position[0] += event.mouse_dx / 120;
-                holding.*.position[1] += -event.mouse_dy / 120;
+            if (state.input.mouse.dragging) |drag| {
+                drag.*.position[0] = state.input.mouse.drag_entity_start[0] + state.input.mouse.position[0] - state.input.mouse.drag_start[0];
+                drag.*.position[1] = state.input.mouse.drag_entity_start[1] + state.input.mouse.position[1] - state.input.mouse.drag_start[1];
+                // std.debug.print("({d}, {d})\n", .{ dragging.*.position[0], dragging.*.position[1] });
             }
         },
         .RESIZED => {
