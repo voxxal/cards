@@ -9,6 +9,7 @@ const sapp = sokol.app;
 const sgapp = sokol.app_gfx_glue;
 const saudio = sokol.audio;
 const slog = sokol.log;
+const simgui = sokol.imgui;
 
 var manager = std.heap.GeneralPurposeAllocator(.{}){};
 const allocator = manager.allocator();
@@ -89,6 +90,8 @@ export fn init() void {
         .logger = .{ .func = slog.func },
     });
 
+    simgui.setup(.{});
+
     state.gfx.bind.vertex_buffers[0] = sg.makeBuffer(.{ .data = sg.asRange(&[_]f32{
         -0.5, 0.5,  0.5, 1, 1, 1, 1, 0, 1,
         0.5,  0.5,  0.5, 1, 1, 1, 1, 1, 1,
@@ -147,6 +150,13 @@ export fn init() void {
 }
 
 export fn frame() void {
+    simgui.newFrame(.{
+        .width = sapp.width(),
+        .height = sapp.height(),
+        .delta_time = sapp.frameDuration(),
+        .dpi_scale = sapp.dpiScale(),
+    });
+    simgui.igText("Hello, world");
     sg.beginDefaultPass(state.gfx.pass_action, sapp.width(), sapp.height());
     sg.applyPipeline(state.gfx.pip);
     sg.applyBindings(state.gfx.bind);
@@ -155,6 +165,7 @@ export fn frame() void {
         state.world.entities.items[i].collider.br = zm.f32x4(entity.size[0] / 2 + entity.position[0], -(entity.size[0] / 2) + entity.position[1], 0, 0);
         renderEntity(entity);
     }
+    simgui.render();
     sg.endPass();
     sg.commit();
 }

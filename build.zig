@@ -29,6 +29,22 @@ pub fn build(b: *std.Build) void {
 
     exe.addAnonymousModule("sokol", .{ .source_file = .{ .path = "lib/sokol-zig/src/sokol/sokol.zig" } });
     exe.linkLibrary(sokol_build);
+    const sokol_path = "lib/sokol-zig/src/sokol/c/";
+
+    exe.addIncludePath(sokol_path ++ "imgui");
+    exe.addSystemIncludePath(sokol_path ++ "imgui");
+    exe.addIncludePath(sokol_path);
+    exe.addSystemIncludePath(sokol_path);
+
+    exe.addCSourceFiles(&[_][]const u8{
+        sokol_path ++ "cimgui.cpp",
+        sokol_path ++ "imgui/imgui.cpp",
+        sokol_path ++ "imgui/imgui_demo.cpp",
+        sokol_path ++ "imgui/imgui_draw.cpp",
+        sokol_path ++ "imgui/imgui_widgets.cpp",
+        sokol_path ++ "imgui/imgui_tables.cpp",
+    }, &[_][]const u8{});
+    exe.linkLibCpp();
 
     zstbi_pkg.link(exe);
     zmath_pkg.link(exe);
