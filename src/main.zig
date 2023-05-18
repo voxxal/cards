@@ -3,6 +3,7 @@ const ArrayList = std.ArrayList;
 const sokol = @import("sokol");
 const zstbi = @import("zstbi");
 const zm = @import("zmath");
+const assets = @import("./assets.zig");
 const sg = sokol.gfx;
 const sapp = sokol.app;
 const sgapp = sokol.app_gfx_glue;
@@ -80,10 +81,6 @@ const State = struct {
     } = .{},
 };
 
-fn cloneVec(vec: zm.Vec) zm.Vec {
-    return zm.f32x4(vec[0], vec[1], vec[2], vec[3]);
-}
-
 var state: State = .{};
 
 export fn init() void {
@@ -135,7 +132,6 @@ export fn init() void {
 
     state.world.entities.append(Entity{
         .texture = state.gfx.bind.fs_images[0],
-        //TODO update bounding box on move
         .collider = .{ .tl = zm.f32x4(-100, 100, 0, 0), .br = zm.f32x4(100, -100, 0, 0) },
         .position = zm.f32x4s(0),
         .rotation = 0,
@@ -151,7 +147,6 @@ export fn init() void {
 }
 
 export fn frame() void {
-    // state.world.entities.items[0].position[0] += 0.01;
     sg.beginDefaultPass(state.gfx.pass_action, sapp.width(), sapp.height());
     sg.applyPipeline(state.gfx.pip);
     sg.applyBindings(state.gfx.bind);
@@ -162,27 +157,6 @@ export fn frame() void {
     }
     sg.endPass();
     sg.commit();
-}
-
-fn screenToWorld(model: zm.Mat, point: zm.Vec) zm.Vec {
-    const point_to_view = zm.mul(point, zm.inverse(state.gfx.projection));
-    const view = zm.lookAtRh(
-        zm.f32x4(0, 0, 10, 1),
-        zm.f32x4(0, 0, 0, 1),
-        zm.f32x4(0, 1, 0, 0),
-    );
-
-    const view_to_object = zm.mul(point_to_view, zm.inverse(view));
-    const object = zm.mul(view_to_object, zm.scaling(0.5, 0.5, 1));
-
-    // std.debug.print("p2v: {any}\nv2o: {any}\nobj: {any}\n====\n", .{ point_to_view, view_to_object, object });
-
-    const object_to_view = zm.mul(model, view);
-    const mvp = zm.mul(object_to_view, state.gfx.projection);
-    std.debug.print("{any}\n", .{mvp});
-    // const pvm = zm.inverse(mvp);
-
-    return object;
 }
 
 // If we need to figure out where the vertices land for click interaction, we might as well do the matrix multiplication on the zig side
@@ -206,6 +180,7 @@ fn renderEntity(entity: Entity) void {
 // TODO Find point relative to entity to anchor cursor to
 export fn input(ev: ?*const sapp.Event) void {
     const event = ev.?;
+    var mouse = &state.input.mouse;
     switch (event.type) {
         .MOUSE_DOWN => {
             // std.debug.print("screen: ({d}, {d})\n", .{
@@ -217,27 +192,25 @@ export fn input(ev: ?*const sapp.Event) void {
             // TODO make some z buffer so i can properly order the entities
             if (event.mouse_button == .LEFT) {
                 for (state.world.entities.items, 0..) |entity, i| {
-                    if (entity.collider.contains(state.input.mouse.position)) {
-                        state.input.mouse.dragging = &state.world.entities.items[i];
-                        state.input.mouse.drag_start = cloneVec(state.input.mouse.position);
-                        state.input.mouse.drag_entity_start = cloneVec(entity.position);
+                    if (entity.collider.contains(mouse.position)) {
+                        mouse.dragging = &state.world.entities.items[i];
+                        mouse.drag_start = mouse.position;
+                        mouse.drag_entity_start = entity.position;
                         break;
                     }
                 }
             }
         },
-
         .MOUSE_UP => {
             if (event.mouse_button == .LEFT) {
-                state.input.mouse.dragging = null;
+                mouse.dragging = null;
             }
         },
         .MOUSE_MOVE => {
-            state.input.mouse.position = zm.f32x4(event.mouse_x - sapp.widthf() / 2, -(event.mouse_y - sapp.heightf() / 2), 0, 0);
-            if (state.input.mouse.dragging) |drag| {
-                drag.*.position[0] = state.input.mouse.drag_entity_start[0] + state.input.mouse.position[0] - state.input.mouse.drag_start[0];
-                drag.*.position[1] = state.input.mouse.drag_entity_start[1] + state.input.mouse.position[1] - state.input.mouse.drag_start[1];
-                // std.debug.print("({d}, {d})\n", .{ dragging.*.position[0], dragging.*.position[1] });
+            mouse.position = zm.f32x4(event.mouse_x - sapp.widthf() / 2, -(event.mouse_y - sapp.heightf() / 2), 0, 0);
+            if (mouse.dragging) |drag| {
+                drag.position[0] = mouse.drag_entity_start[0] + mouse.position[0] - mouse.drag_start[0];
+                drag.position[1] = mouse.drag_entity_start[1] + mouse.position[1] - mouse.drag_start[1];
             }
         },
         .RESIZED => {

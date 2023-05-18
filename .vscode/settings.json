@@ -1,0 +1,6 @@
+{
+    "files.associations": {
+        "*.org": "org",
+        "sokol_imgui.h": "c"
+    }
+}
