@@ -1,7 +1,6 @@
 const builtin = @import("builtin");
 const sapp = @import("./app.zig");
 const sg = @import("./gfx.zig");
-// FIXME you idiot you need to add this to your build file
 pub usingnamespace @cImport({
     @cDefine("CIMGUI_DEFINE_ENUMS_AND_STRUCTS", "");
     @cInclude("cimgui.h");

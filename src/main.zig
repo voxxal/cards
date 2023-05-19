@@ -1,5 +1,6 @@
 const std = @import("std");
-const ArrayList = std.ArrayList;
+const time = std.time;
+const ArrayList = std.ArrayList; // TODO convert to MultiArrayList
 const sokol = @import("sokol");
 const zstbi = @import("zstbi");
 const zm = @import("zmath");
@@ -28,9 +29,9 @@ const AABB = struct {
 };
 
 const Suit = enum {
-    hearts,
     clubs,
     diamonds,
+    hearts,
     spades,
 };
 
@@ -46,13 +47,12 @@ const EntityType = enum {
 };
 
 const EntityData = union(EntityType) {
-    card: struct { id: CardId },
+    card: struct { id: CardId, flipped: bool },
     stack: struct { cards: ArrayList(EntityData) },
     hand: struct { cards: ArrayList(EntityData) },
 };
 
 const Entity = struct {
-    texture: sg.Image = .{},
     collider: AABB = .{},
     position: zm.Vec = zm.f32x4s(0),
     rotation: f32 = 0,
@@ -63,6 +63,7 @@ const Entity = struct {
 const Mouse = struct {
     position: zm.Vec = zm.f32x4s(0),
     dragging: ?*Entity = null,
+    drag_timer: time.Timer = undefined,
     drag_start: zm.Vec = zm.f32x4s(0),
     drag_entity_start: zm.Vec = zm.f32x4s(0),
 };
@@ -89,6 +90,7 @@ export fn init() void {
         .context = sgapp.context(),
         .logger = .{ .func = slog.func },
     });
+    assets.loadAssets();
 
     simgui.setup(.{});
 
@@ -104,12 +106,7 @@ export fn init() void {
         .data = sg.asRange(&[_]u16{ 0, 1, 2, 1, 2, 3 }),
     });
 
-    var image_src: zstbi.Image = zstbi.Image.loadFromFile("/home/voxal/code/cards/assets/bpfp-steam.png", 4) catch unreachable;
-
-    var image_desc: sg.ImageDesc = .{ .width = 16, .height = 16 };
-    image_desc.data.subimage[0][0] = sg.asRange(image_src.data);
-    state.gfx.bind.fs_images[0] = sg.makeImage(image_desc);
-    zstbi.Image.deinit(&image_src);
+    state.gfx.bind.fs_images[0] = assets.card;
 
     const shd = sg.makeShader(glShaderDesc());
 
@@ -134,19 +131,33 @@ export fn init() void {
     };
 
     state.world.entities.append(Entity{
-        .texture = state.gfx.bind.fs_images[0],
-        .collider = .{ .tl = zm.f32x4(-100, 100, 0, 0), .br = zm.f32x4(100, -100, 0, 0) },
+        .collider = .{ .tl = zm.f32x4(-50, 70, 0, 0), .br = zm.f32x4(50, -70, 0, 0) },
         .position = zm.f32x4s(0),
         .rotation = 0,
-        .size = zm.f32x4(200, 200, 0, 0),
+        .size = zm.f32x4(100, 140, 0, 0),
         .data = .{
             .card = .{
                 .id = .{ .suit = Suit.hearts, .rank = 2 },
+                .flipped = false,
+            },
+        },
+    }) catch unreachable;
+
+    state.world.entities.append(Entity{
+        .collider = .{ .tl = zm.f32x4(-50, 70, 0, 0), .br = zm.f32x4(50, -70, 0, 0) },
+        .position = zm.f32x4s(0),
+        .rotation = 0,
+        .size = zm.f32x4(100, 140, 0, 0),
+        .data = .{
+            .card = .{
+                .id = .{ .suit = Suit.clubs, .rank = 2 },
+                .flipped = false,
             },
         },
     }) catch unreachable;
 
     state.gfx.projection = zm.orthographicRhGl(sapp.widthf(), sapp.heightf(), -1, 100);
+    state.input.mouse.drag_timer = time.Timer.start() catch @panic("timer not supported");
 }
 
 export fn frame() void {
@@ -156,7 +167,11 @@ export fn frame() void {
         .delta_time = sapp.frameDuration(),
         .dpi_scale = sapp.dpiScale(),
     });
-    simgui.igText("Hello, world");
+
+    _ = simgui.igBegin("Window", null, 1 + 2 + 4 + 8 + 256 + 786944); // NoTitleBar|NoResize|NoMove|NoScrollbar|NoSavedSettings|NoInputs
+    const draw_list = simgui.igGetWindowDrawList();
+    _ = draw_list;
+    simgui.igEnd();
     sg.beginDefaultPass(state.gfx.pass_action, sapp.width(), sapp.height());
     sg.applyPipeline(state.gfx.pip);
     sg.applyBindings(state.gfx.bind);
@@ -170,22 +185,70 @@ export fn frame() void {
     sg.commit();
 }
 
-// If we need to figure out where the vertices land for click interaction, we might as well do the matrix multiplication on the zig side
+// TODO it would be more efficent to batch all of the card draws at the same time
 fn renderEntity(entity: Entity) void {
-    if (entity.texture.id != state.gfx.bind.fs_images[0].id) {
-        state.gfx.bind.fs_images[0] = entity.texture;
-        sg.applyBindings(state.gfx.bind);
+    switch (entity.data) {
+        EntityType.card => |data| {
+            if (data.flipped) {
+                state.gfx.bind.fs_images[0] = assets.card_back;
+                sg.applyBindings(state.gfx.bind);
+
+                var card_model = zm.scalingV(entity.size);
+
+                card_model = zm.mul(card_model, zm.rotationZ(entity.rotation));
+                card_model = zm.mul(card_model, zm.translationV(entity.position));
+
+                const card_mvp = zm.mul(card_model, state.gfx.projection);
+
+                sg.applyUniforms(.VS, 0, sg.asRange(&.{ .mvp = zm.matToArr(card_mvp) }));
+                sg.draw(0, 6, 1);
+            } else {
+                // render base card
+                state.gfx.bind.fs_images[0] = assets.card;
+                sg.applyBindings(state.gfx.bind);
+                var card_model = zm.scalingV(entity.size);
+
+                card_model = zm.mul(card_model, zm.rotationZ(entity.rotation));
+                card_model = zm.mul(card_model, zm.translationV(entity.position));
+
+                const card_mvp = zm.mul(card_model, state.gfx.projection);
+
+                sg.applyUniforms(.VS, 0, sg.asRange(&.{ .mvp = zm.matToArr(card_mvp) }));
+                sg.draw(0, 6, 1);
+
+                // render glyph
+                state.gfx.bind.fs_images[0] = switch (data.id.suit) {
+                    Suit.clubs => assets.clubs,
+                    Suit.diamonds => assets.diamonds,
+                    Suit.hearts => assets.hearts,
+                    Suit.spades => assets.spades,
+                };
+                sg.applyBindings(state.gfx.bind);
+                var glyph_max = std.math.min(entity.size[0], entity.size[1]);
+                var glyph_model = zm.scaling(glyph_max / 3, glyph_max / 3, 0);
+                glyph_model = zm.mul(glyph_model, zm.rotationZ(entity.rotation));
+                glyph_model = zm.mul(glyph_model, zm.translationV(entity.position));
+                const glyph_mvp = zm.mul(glyph_model, state.gfx.projection);
+
+                sg.applyUniforms(.VS, 0, sg.asRange(&.{ .mvp = zm.matToArr(glyph_mvp) }));
+                sg.draw(0, 6, 1);
+            }
+        },
+        else => {
+            state.gfx.bind.fs_images[0] = assets.card;
+            sg.applyBindings(state.gfx.bind);
+
+            var model = zm.scalingV(entity.size);
+
+            model = zm.mul(model, zm.rotationZ(entity.rotation));
+            model = zm.mul(model, zm.translationV(entity.position));
+
+            const mvp = zm.mul(model, state.gfx.projection);
+
+            sg.applyUniforms(.VS, 0, sg.asRange(&.{ .mvp = zm.matToArr((mvp)) }));
+            sg.draw(0, 6, 1);
+        },
     }
-
-    var model = zm.scalingV(entity.size);
-
-    model = zm.mul(model, zm.rotationZ(entity.rotation));
-    model = zm.mul(model, zm.translationV(entity.position));
-
-    const mvp = zm.mul(model, state.gfx.projection);
-
-    sg.applyUniforms(.VS, 0, sg.asRange(&.{ .mvp = zm.matToArr((mvp)) }));
-    sg.draw(0, 6, 1);
 }
 
 // TODO Find point relative to entity to anchor cursor to
@@ -202,17 +265,30 @@ export fn input(ev: ?*const sapp.Event) void {
             // Check for entities that are under the cursor, taking the first one found
             // TODO make some z buffer so i can properly order the entities
             if (event.mouse_button == .LEFT) {
-                for (state.world.entities.items, 0..) |entity, i| {
+                var i: usize = state.world.entities.items.len;
+                while (i > 0) {
+                    i -= 1;
+                    const entity: *Entity = &state.world.entities.items[i];
                     if (entity.collider.contains(mouse.position)) {
-                        mouse.dragging = &state.world.entities.items[i];
+                        mouse.dragging = entity;
                         mouse.drag_start = mouse.position;
                         mouse.drag_entity_start = entity.position;
+                        mouse.drag_timer.reset();
                         break;
                     }
                 }
             }
         },
         .MOUSE_UP => {
+            if (mouse.drag_timer.read() < 2e8) {
+                switch (mouse.dragging.?.data) {
+                    EntityType.card => |*data| {
+                        data.*.flipped = !data.flipped;
+                    },
+                    else => {},
+                }
+            }
+
             if (event.mouse_button == .LEFT) {
                 mouse.dragging = null;
             }
