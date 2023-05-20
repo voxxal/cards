@@ -27,3 +27,6 @@ pub fn loadAssets() void {
     hearts = loadImage("./assets/hearts.png", .{ .width = 64, .height = 64 });
     spades = loadImage("./assets/spades.png", .{ .width = 64, .height = 64 });
 }
+
+pub const suit_black: u32 = 0xff2e2a23;
+pub const suit_red: u32 = 0xff5255f8;

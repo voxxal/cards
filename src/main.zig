@@ -167,19 +167,20 @@ export fn frame() void {
         .delta_time = sapp.frameDuration(),
         .dpi_scale = sapp.dpiScale(),
     });
-
+    simgui.igSetNextWindowBgAlpha(0);
+    simgui.igSetNextWindowPos(simgui.ImVec2{ .x = 0, .y = 0 }, 0, simgui.ImVec2{ .x = 0, .y = 0 });
+    simgui.igSetNextWindowSize(simgui.ImVec2{ .x = sapp.widthf(), .y = sapp.heightf() }, 0);
     _ = simgui.igBegin("Window", null, 1 + 2 + 4 + 8 + 256 + 786944); // NoTitleBar|NoResize|NoMove|NoScrollbar|NoSavedSettings|NoInputs
-    const draw_list = simgui.igGetWindowDrawList();
-    _ = draw_list;
-    simgui.igEnd();
     sg.beginDefaultPass(state.gfx.pass_action, sapp.width(), sapp.height());
     sg.applyPipeline(state.gfx.pip);
     sg.applyBindings(state.gfx.bind);
+    // TODO colliders are off for some reason
     for (state.world.entities.items, 0..) |entity, i| {
         state.world.entities.items[i].collider.tl = zm.f32x4(-(entity.size[0] / 2) + entity.position[0], entity.size[0] / 2 + entity.position[1], 0, 0);
         state.world.entities.items[i].collider.br = zm.f32x4(entity.size[0] / 2 + entity.position[0], -(entity.size[0] / 2) + entity.position[1], 0, 0);
         renderEntity(entity);
     }
+    simgui.igEnd();
     simgui.render();
     sg.endPass();
     sg.commit();
@@ -232,6 +233,35 @@ fn renderEntity(entity: Entity) void {
 
                 sg.applyUniforms(.VS, 0, sg.asRange(&.{ .mvp = zm.matToArr(glyph_mvp) }));
                 sg.draw(0, 6, 1);
+
+                // render numbers
+                const draw_list = simgui.igGetWindowDrawList();
+                const num = switch (data.id.rank) {
+                    1 => "A",
+                    2...9 => |v| &[_:0]u8{@as(u8, v) + '0'},
+                    10 => "10",
+                    11 => "J",
+                    12 => "Q",
+                    13 => "K",
+                    else => "B",
+                };
+                const color = switch (data.id.suit) {
+                    Suit.diamonds, Suit.hearts => assets.suit_red,
+                    Suit.clubs, Suit.spades => assets.suit_black,
+                };
+
+                // std.debug.print("length: {any}\n", .{fmt_num.len});
+
+                simgui.ImDrawList_AddText_Vec2(
+                    draw_list,
+                    simgui.ImVec2{
+                        .x = entity.position[0] + sapp.widthf() / 2 - entity.size[0] / 2 + 8,
+                        .y = -entity.position[1] + sapp.heightf() / 2 - entity.size[1] / 2 + 8,
+                    },
+                    color,
+                    &num[0],
+                    &num[num.len],
+                );
             }
         },
         else => {
@@ -251,18 +281,11 @@ fn renderEntity(entity: Entity) void {
     }
 }
 
-// TODO Find point relative to entity to anchor cursor to
 export fn input(ev: ?*const sapp.Event) void {
     const event = ev.?;
     var mouse = &state.input.mouse;
     switch (event.type) {
         .MOUSE_DOWN => {
-            // std.debug.print("screen: ({d}, {d})\n", .{
-            //     2 * (event.mouse_x / sapp.widthf()) - 1,
-            //     -(2 * (event.mouse_y / sapp.heightf()) - 1),
-            // });
-            // std.debug.print("world: ({d}, {d})", .{ event.mouse_x - sapp.widthf() / 2, event.mouse_y - sapp.heightf() / 2 });
-            // Check for entities that are under the cursor, taking the first one found
             // TODO make some z buffer so i can properly order the entities
             if (event.mouse_button == .LEFT) {
                 var i: usize = state.world.entities.items.len;
