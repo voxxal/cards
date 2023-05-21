@@ -65,7 +65,7 @@ const Mouse = struct {
     position: zm.Vec = zm.f32x4s(0),
     velocity: zm.Vec = zm.f32x4s(0),
     dragging: ?*Entity = null,
-    drag_timer: time.Timer = undefined,
+    drag_start: zm.Vec = zm.f32x4s(0),
 };
 
 const State = struct {
@@ -131,10 +131,10 @@ export fn init() void {
     };
 
     state.world.entities.append(Entity{
-        .collider = .{ .tl = zm.f32x4(-50, 70, 0, 0), .br = zm.f32x4(50, -70, 0, 0) },
+        .collider = .{},
         .position = zm.f32x4s(0),
         .rotation = 0,
-        .size = zm.f32x4(100, 140, 0, 0),
+        .size = zm.f32x4(125, 175, 0, 0),
         .data = .{
             .card = .{
                 .id = .{ .suit = Suit.hearts, .rank = 2 },
@@ -144,10 +144,10 @@ export fn init() void {
     }) catch unreachable;
 
     state.world.entities.append(Entity{
-        .collider = .{ .tl = zm.f32x4(-50, 70, 0, 0), .br = zm.f32x4(50, -70, 0, 0) },
+        .collider = .{},
         .position = zm.f32x4s(0),
         .rotation = 0,
-        .size = zm.f32x4(100, 140, 0, 0),
+        .size = zm.f32x4(125, 175, 0, 0),
         .data = .{
             .card = .{
                 .id = .{ .suit = Suit.clubs, .rank = 13 },
@@ -157,7 +157,6 @@ export fn init() void {
     }) catch unreachable;
 
     state.gfx.projection = zm.orthographicRhGl(sapp.widthf(), sapp.heightf(), -1, 100);
-    state.input.mouse.drag_timer = time.Timer.start() catch @panic("timer not supported");
 }
 
 export fn frame() void {
@@ -179,8 +178,8 @@ export fn frame() void {
         entity.collider.br = zm.f32x4(entity.size[0] / 2 + entity.position[0], -(entity.size[1] / 2) + entity.position[1], 0, 0);
         entity.position[0] += entity.velocity[0];
         entity.position[1] -= entity.velocity[1];
-        entity.velocity[0] *= 0.8;
-        entity.velocity[1] *= 0.8;
+        entity.velocity[0] *= 0.5;
+        entity.velocity[1] *= 0.5;
 
         renderEntity(entity.*);
     }
@@ -298,7 +297,7 @@ export fn input(ev: ?*const sapp.Event) void {
                     if (entity.collider.contains(mouse.position)) {
                         mouse.dragging = entity;
                         entity.velocity = zm.f32x4(0, 0, 0, 0);
-                        mouse.drag_timer.reset();
+                        mouse.drag_start = entity.position;
                         break;
                     }
                 }
@@ -309,7 +308,11 @@ export fn input(ev: ?*const sapp.Event) void {
                 switch (dragging.data) {
                     EntityType.card => |*data| {
                         dragging.velocity = mouse.velocity;
-                        if (mouse.drag_timer.read() < 1.5e8) {
+                        if (std.math.hypot(
+                            f32,
+                            dragging.position[0] - mouse.drag_start[0],
+                            dragging.position[1] - mouse.drag_start[1],
+                        ) < 50) {
                             data.*.flipped = !data.flipped;
                         }
                     },
@@ -323,7 +326,13 @@ export fn input(ev: ?*const sapp.Event) void {
         },
         .MOUSE_MOVE => {
             mouse.position = zm.f32x4(event.mouse_x - sapp.widthf() / 2, -(event.mouse_y - sapp.heightf() / 2), 0, 0);
-            mouse.velocity = zm.f32x4(event.mouse_dx, event.mouse_dy, 0, 0);
+
+            mouse.velocity = zm.f32x4(
+                if (event.mouse_dx >= -2 and event.mouse_dx <= 2) 0 else event.mouse_dx,
+                if (event.mouse_dy >= -2 and event.mouse_dx <= 2) 0 else event.mouse_dy,
+                0,
+                0,
+            );
             if (mouse.dragging) |drag| {
                 drag.position[0] += event.mouse_dx;
                 drag.position[1] -= event.mouse_dy;
