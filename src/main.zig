@@ -56,16 +56,16 @@ const Entity = struct {
     collider: AABB = .{},
     position: zm.Vec = zm.f32x4s(0),
     rotation: f32 = 0,
+    velocity: zm.Vec = zm.f32x4s(0),
     size: zm.Vec = zm.f32x4s(1),
     data: EntityData,
 };
 
 const Mouse = struct {
     position: zm.Vec = zm.f32x4s(0),
+    velocity: zm.Vec = zm.f32x4s(0),
     dragging: ?*Entity = null,
     drag_timer: time.Timer = undefined,
-    drag_start: zm.Vec = zm.f32x4s(0),
-    drag_entity_start: zm.Vec = zm.f32x4s(0),
 };
 
 const State = struct {
@@ -150,7 +150,7 @@ export fn init() void {
         .size = zm.f32x4(100, 140, 0, 0),
         .data = .{
             .card = .{
-                .id = .{ .suit = Suit.clubs, .rank = 2 },
+                .id = .{ .suit = Suit.clubs, .rank = 13 },
                 .flipped = false,
             },
         },
@@ -174,11 +174,15 @@ export fn frame() void {
     sg.beginDefaultPass(state.gfx.pass_action, sapp.width(), sapp.height());
     sg.applyPipeline(state.gfx.pip);
     sg.applyBindings(state.gfx.bind);
-    // TODO colliders are off for some reason
-    for (state.world.entities.items, 0..) |entity, i| {
-        state.world.entities.items[i].collider.tl = zm.f32x4(-(entity.size[0] / 2) + entity.position[0], entity.size[0] / 2 + entity.position[1], 0, 0);
-        state.world.entities.items[i].collider.br = zm.f32x4(entity.size[0] / 2 + entity.position[0], -(entity.size[0] / 2) + entity.position[1], 0, 0);
-        renderEntity(entity);
+    for (state.world.entities.items) |*entity| {
+        entity.collider.tl = zm.f32x4(-(entity.size[0] / 2) + entity.position[0], entity.size[1] / 2 + entity.position[1], 0, 0);
+        entity.collider.br = zm.f32x4(entity.size[0] / 2 + entity.position[0], -(entity.size[1] / 2) + entity.position[1], 0, 0);
+        entity.position[0] += entity.velocity[0];
+        entity.position[1] -= entity.velocity[1];
+        entity.velocity[0] *= 0.8;
+        entity.velocity[1] *= 0.8;
+
+        renderEntity(entity.*);
     }
     simgui.igEnd();
     simgui.render();
@@ -245,12 +249,11 @@ fn renderEntity(entity: Entity) void {
                     13 => "K",
                     else => "B",
                 };
+
                 const color = switch (data.id.suit) {
                     Suit.diamonds, Suit.hearts => assets.suit_red,
                     Suit.clubs, Suit.spades => assets.suit_black,
                 };
-
-                // std.debug.print("length: {any}\n", .{fmt_num.len});
 
                 simgui.ImDrawList_AddText_Vec2(
                     draw_list,
@@ -294,8 +297,7 @@ export fn input(ev: ?*const sapp.Event) void {
                     const entity: *Entity = &state.world.entities.items[i];
                     if (entity.collider.contains(mouse.position)) {
                         mouse.dragging = entity;
-                        mouse.drag_start = mouse.position;
-                        mouse.drag_entity_start = entity.position;
+                        entity.velocity = zm.f32x4(0, 0, 0, 0);
                         mouse.drag_timer.reset();
                         break;
                     }
@@ -303,10 +305,13 @@ export fn input(ev: ?*const sapp.Event) void {
             }
         },
         .MOUSE_UP => {
-            if (mouse.drag_timer.read() < 2e8) {
-                switch (mouse.dragging.?.data) {
+            if (mouse.dragging) |dragging| {
+                switch (dragging.data) {
                     EntityType.card => |*data| {
-                        data.*.flipped = !data.flipped;
+                        dragging.velocity = mouse.velocity;
+                        if (mouse.drag_timer.read() < 1.5e8) {
+                            data.*.flipped = !data.flipped;
+                        }
                     },
                     else => {},
                 }
@@ -318,9 +323,10 @@ export fn input(ev: ?*const sapp.Event) void {
         },
         .MOUSE_MOVE => {
             mouse.position = zm.f32x4(event.mouse_x - sapp.widthf() / 2, -(event.mouse_y - sapp.heightf() / 2), 0, 0);
+            mouse.velocity = zm.f32x4(event.mouse_dx, event.mouse_dy, 0, 0);
             if (mouse.dragging) |drag| {
-                drag.position[0] = mouse.drag_entity_start[0] + mouse.position[0] - mouse.drag_start[0];
-                drag.position[1] = mouse.drag_entity_start[1] + mouse.position[1] - mouse.drag_start[1];
+                drag.position[0] += event.mouse_dx;
+                drag.position[1] -= event.mouse_dy;
             }
         },
         .RESIZED => {
