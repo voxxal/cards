@@ -186,7 +186,8 @@ export fn init() void {
     state.gfx.pip = sg.makePipeline(pip_desc);
     state.gfx.pass_action.colors[0] = .{
         .action = .CLEAR,
-        .value = .{ .r = 1, .g = 1, .b = 1, .a = 1 },
+        //FDF6E3
+        .value = .{ .r = 0xfdp0 / 0xffp0, .g = 0xf6p0 / 0xffp0, .b = 0xe3p0 / 0xffp0, .a = 1 },
     };
 
     state.world.entities.append(Entity{
@@ -236,8 +237,8 @@ export fn frame() void {
         entity.collider.br = zm.f32x4(entity.size[0] / 2 + entity.position[0], -(entity.size[1] / 2) + entity.position[1], 0, 0);
         entity.position[0] += entity.velocity[0];
         entity.position[1] -= entity.velocity[1];
-        entity.velocity[0] *= 0.5;
-        entity.velocity[1] *= 0.5;
+        entity.velocity[0] *= 0.65;
+        entity.velocity[1] *= 0.65;
 
         renderEntity(entity.*);
     }
@@ -252,7 +253,15 @@ export fn frame() void {
 fn renderEntity(entity: Entity) void {
     switch (entity.data) {
         EntityType.card => |data| {
-            if (entity.dragged) {}
+            if (entity.dragged) {
+                var outline_model = zm.scalingV(zm.f32x4(entity.size[0] + 6, entity.size[1] + 6, entity.size[2], entity.size[3]));
+
+                outline_model = zm.mul(outline_model, zm.rotationZ(entity.rotation));
+                outline_model = zm.mul(outline_model, zm.translationV(entity.position));
+
+                const mvp = zm.mul(outline_model, state.gfx.projection);
+                pushQuad(mvp, assets.card_outline, .{ 0x3ap0 / 0xffp0, 0x94p0 / 0xffp0, 0xc5p0 / 0xffp0, 1 });
+            }
 
             if (data.flipped) {
                 var card_model = zm.scalingV(entity.size);

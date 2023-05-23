@@ -14,6 +14,7 @@ fn loadImage(path: [:0]const u8, desc: sg.ImageDesc) sg.Image {
 
 pub var card: sg.Image = undefined;
 pub var card_back: sg.Image = undefined;
+pub var card_outline: sg.Image = undefined;
 pub var clubs: sg.Image = undefined;
 pub var diamonds: sg.Image = undefined;
 pub var hearts: sg.Image = undefined;
@@ -22,6 +23,7 @@ pub var spades: sg.Image = undefined;
 pub fn loadAssets() void {
     card = loadImage("./assets/card.png", .{ .width = 100, .height = 140 });
     card_back = loadImage("./assets/card_back.png", .{ .width = 400, .height = 560 });
+    card_outline = loadImage("./assets/card_outline.png", .{ .width = 100, .height = 140 });
     clubs = loadImage("./assets/clubs.png", .{ .width = 64, .height = 64 });
     diamonds = loadImage("./assets/diamonds.png", .{ .width = 64, .height = 64 });
     hearts = loadImage("./assets/hearts.png", .{ .width = 64, .height = 64 });
