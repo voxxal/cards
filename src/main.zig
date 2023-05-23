@@ -59,6 +59,7 @@ const Entity = struct {
     velocity: zm.Vec = zm.f32x4s(0),
     size: zm.Vec = zm.f32x4s(1),
     data: EntityData,
+    dragged: bool = false,
 };
 
 const Mouse = struct {
@@ -66,11 +67,23 @@ const Mouse = struct {
     velocity: zm.Vec = zm.f32x4s(0),
     dragging: ?*Entity = null,
     drag_start: zm.Vec = zm.f32x4s(0),
+    drag_timer: time.Timer = undefined,
+};
+
+const Vertex = extern struct {
+    position: [4]f32,
+    tint: [4]f32,
+    tex: [2]f32,
 };
 
 const State = struct {
     gfx: struct {
         bind: sg.Bindings = .{},
+        quad_batch: [1024]Vertex = [_]Vertex{undefined} ** 1024,
+        quad_batch_index: u32 = 0,
+        quad_batch_index_buf: [1024 * 3 / 2]u16 = [_]u16{0} ** (1024 * 3 / 2),
+        quad_batch_index_buf_index: u32 = 0,
+        quad_batch_tex: sg.Image = .{ .id = 0 },
         pip: sg.Pipeline = .{},
         pass_action: sg.PassAction = .{},
         projection: zm.Mat = zm.identity(),
@@ -85,6 +98,44 @@ const State = struct {
 
 var state: State = .{};
 
+fn flushQuadBatch() void {
+    const gfx = &state.gfx;
+    if (gfx.quad_batch_tex.id == 0 or gfx.quad_batch_index == 0) return;
+    gfx.bind.vertex_buffer_offsets[0] = sg.appendBuffer(gfx.bind.vertex_buffers[0], sg.asRange(&gfx.quad_batch));
+    gfx.bind.index_buffer_offset = sg.appendBuffer(gfx.bind.index_buffer, sg.asRange(&gfx.quad_batch_index_buf));
+    gfx.bind.fs_images[0] = gfx.quad_batch_tex;
+    sg.applyBindings(gfx.bind);
+    sg.draw(0, gfx.quad_batch_index_buf_index, 1);
+    gfx.quad_batch = std.mem.zeroes([1024]Vertex);
+    gfx.quad_batch_index = 0;
+    gfx.quad_batch_index_buf = std.mem.zeroes([1024 * 3 / 2]u16);
+    gfx.quad_batch_index_buf_index = 0;
+}
+
+fn pushQuad(mvp: zm.Mat, texture: sg.Image, tint: [4]f32) void {
+    if (texture.id != state.gfx.quad_batch_tex.id) {
+        flushQuadBatch();
+    }
+    state.gfx.quad_batch_tex = texture;
+    const tl = zm.mul(zm.f32x4(-0.5, 0.5, 0.5, 1), mvp);
+    const tr = zm.mul(zm.f32x4(0.5, 0.5, 0.5, 1), mvp);
+    const bl = zm.mul(zm.f32x4(-0.5, -0.5, 0.5, 1), mvp);
+    const br = zm.mul(zm.f32x4(0.5, -0.5, 0.5, 1), mvp);
+    state.gfx.quad_batch[state.gfx.quad_batch_index + 0] = Vertex{ .position = zm.vecToArr4(tl), .tint = tint, .tex = .{ 0, 1 } };
+    state.gfx.quad_batch[state.gfx.quad_batch_index + 1] = Vertex{ .position = zm.vecToArr4(tr), .tint = tint, .tex = .{ 1, 1 } };
+    state.gfx.quad_batch[state.gfx.quad_batch_index + 2] = Vertex{ .position = zm.vecToArr4(bl), .tint = tint, .tex = .{ 0, 0 } };
+    state.gfx.quad_batch[state.gfx.quad_batch_index + 3] = Vertex{ .position = zm.vecToArr4(br), .tint = tint, .tex = .{ 1, 0 } };
+    state.gfx.quad_batch_index += 4;
+
+    state.gfx.quad_batch_index_buf[state.gfx.quad_batch_index_buf_index + 0] = 0;
+    state.gfx.quad_batch_index_buf[state.gfx.quad_batch_index_buf_index + 1] = 1;
+    state.gfx.quad_batch_index_buf[state.gfx.quad_batch_index_buf_index + 2] = 2;
+    state.gfx.quad_batch_index_buf[state.gfx.quad_batch_index_buf_index + 3] = 1;
+    state.gfx.quad_batch_index_buf[state.gfx.quad_batch_index_buf_index + 4] = 2;
+    state.gfx.quad_batch_index_buf[state.gfx.quad_batch_index_buf_index + 5] = 3;
+    state.gfx.quad_batch_index_buf_index += 6;
+}
+
 export fn init() void {
     sg.setup(.{
         .context = sgapp.context(),
@@ -94,16 +145,24 @@ export fn init() void {
 
     simgui.setup(.{});
 
-    state.gfx.bind.vertex_buffers[0] = sg.makeBuffer(.{ .data = sg.asRange(&[_]f32{
-        -0.5, 0.5,  0.5, 1, 1, 1, 1, 0, 1,
-        0.5,  0.5,  0.5, 1, 1, 1, 1, 1, 1,
-        -0.5, -0.5, 0.5, 1, 1, 1, 1, 0, 0,
-        0.5,  -0.5, 0.5, 1, 1, 1, 1, 1, 0,
-    }) });
+    // state.gfx.bind.vertex_buffers[0] = sg.makeBuffer(.{ .data = sg.asRange(&[_]f32{
+    //     -0.5, 0.5,  0.5, 1, 1, 1, 1, 0, 1,
+    //     0.5,  0.5,  0.5, 1, 1, 1, 1, 1, 1,
+    //     -0.5, -0.5, 0.5, 1, 1, 1, 1, 0, 0,
+    //     0.5,  -0.5, 0.5, 1, 1, 1, 1, 1, 0,
+    // }) });
+
+    state.gfx.bind.vertex_buffers[0] = sg.makeBuffer(.{
+        .usage = .STREAM,
+        .size = 1024 * 700,
+        .label = "quad-vertices",
+    });
 
     state.gfx.bind.index_buffer = sg.makeBuffer(.{
         .type = .INDEXBUFFER,
-        .data = sg.asRange(&[_]u16{ 0, 1, 2, 1, 2, 3 }),
+        .usage = .STREAM,
+        .size = 1024 * 700,
+        // .data = sg.asRange(&[_]u16{ 0, 1, 2, 1, 2, 3 }),
     });
 
     state.gfx.bind.fs_images[0] = assets.card;
@@ -115,7 +174,7 @@ export fn init() void {
         .shader = shd,
         .blend_color = .{ .r = 1, .g = 0, .b = 0, .a = 1 },
     };
-    pip_desc.layout.attrs[0].format = .FLOAT3;
+    pip_desc.layout.attrs[0].format = .FLOAT4;
     pip_desc.layout.attrs[1].format = .FLOAT4;
     pip_desc.layout.attrs[2].format = .FLOAT2;
     pip_desc.colors[0].blend = .{
@@ -131,7 +190,6 @@ export fn init() void {
     };
 
     state.world.entities.append(Entity{
-        .collider = .{},
         .position = zm.f32x4s(0),
         .rotation = 0,
         .size = zm.f32x4(125, 175, 0, 0),
@@ -144,7 +202,6 @@ export fn init() void {
     }) catch unreachable;
 
     state.world.entities.append(Entity{
-        .collider = .{},
         .position = zm.f32x4s(0),
         .rotation = 0,
         .size = zm.f32x4(125, 175, 0, 0),
@@ -157,6 +214,7 @@ export fn init() void {
     }) catch unreachable;
 
     state.gfx.projection = zm.orthographicRhGl(sapp.widthf(), sapp.heightf(), -1, 100);
+    state.input.mouse.drag_timer = time.Timer.start() catch @panic("timer not supported");
 }
 
 export fn frame() void {
@@ -183,6 +241,7 @@ export fn frame() void {
 
         renderEntity(entity.*);
     }
+    flushQuadBatch();
     simgui.igEnd();
     simgui.render();
     sg.endPass();
@@ -193,10 +252,9 @@ export fn frame() void {
 fn renderEntity(entity: Entity) void {
     switch (entity.data) {
         EntityType.card => |data| {
-            if (data.flipped) {
-                state.gfx.bind.fs_images[0] = assets.card_back;
-                sg.applyBindings(state.gfx.bind);
+            if (entity.dragged) {}
 
+            if (data.flipped) {
                 var card_model = zm.scalingV(entity.size);
 
                 card_model = zm.mul(card_model, zm.rotationZ(entity.rotation));
@@ -204,12 +262,9 @@ fn renderEntity(entity: Entity) void {
 
                 const card_mvp = zm.mul(card_model, state.gfx.projection);
 
-                sg.applyUniforms(.VS, 0, sg.asRange(&.{ .mvp = zm.matToArr(card_mvp) }));
-                sg.draw(0, 6, 1);
+                pushQuad(card_mvp, assets.card_back, .{ 1, 1, 1, 1 });
             } else {
                 // render base card
-                state.gfx.bind.fs_images[0] = assets.card;
-                sg.applyBindings(state.gfx.bind);
                 var card_model = zm.scalingV(entity.size);
 
                 card_model = zm.mul(card_model, zm.rotationZ(entity.rotation));
@@ -217,25 +272,21 @@ fn renderEntity(entity: Entity) void {
 
                 const card_mvp = zm.mul(card_model, state.gfx.projection);
 
-                sg.applyUniforms(.VS, 0, sg.asRange(&.{ .mvp = zm.matToArr(card_mvp) }));
-                sg.draw(0, 6, 1);
+                pushQuad(card_mvp, assets.card, .{ 1, 1, 1, 1 });
 
                 // render glyph
-                state.gfx.bind.fs_images[0] = switch (data.id.suit) {
-                    Suit.clubs => assets.clubs,
-                    Suit.diamonds => assets.diamonds,
-                    Suit.hearts => assets.hearts,
-                    Suit.spades => assets.spades,
-                };
-                sg.applyBindings(state.gfx.bind);
                 var glyph_max = std.math.min(entity.size[0], entity.size[1]);
                 var glyph_model = zm.scaling(glyph_max / 3, glyph_max / 3, 0);
                 glyph_model = zm.mul(glyph_model, zm.rotationZ(entity.rotation));
                 glyph_model = zm.mul(glyph_model, zm.translationV(entity.position));
                 const glyph_mvp = zm.mul(glyph_model, state.gfx.projection);
 
-                sg.applyUniforms(.VS, 0, sg.asRange(&.{ .mvp = zm.matToArr(glyph_mvp) }));
-                sg.draw(0, 6, 1);
+                pushQuad(glyph_mvp, switch (data.id.suit) {
+                    Suit.clubs => assets.clubs,
+                    Suit.diamonds => assets.diamonds,
+                    Suit.hearts => assets.hearts,
+                    Suit.spades => assets.spades,
+                }, .{ 1, 1, 1, 1 });
 
                 // render numbers
                 const draw_list = simgui.igGetWindowDrawList();
@@ -288,7 +339,6 @@ export fn input(ev: ?*const sapp.Event) void {
     var mouse = &state.input.mouse;
     switch (event.type) {
         .MOUSE_DOWN => {
-            // TODO make some z buffer so i can properly order the entities
             if (event.mouse_button == .LEFT) {
                 var i: usize = state.world.entities.items.len;
                 while (i > 0) {
@@ -296,8 +346,10 @@ export fn input(ev: ?*const sapp.Event) void {
                     const entity: *Entity = &state.world.entities.items[i];
                     if (entity.collider.contains(mouse.position)) {
                         mouse.dragging = entity;
-                        entity.velocity = zm.f32x4(0, 0, 0, 0);
                         mouse.drag_start = entity.position;
+                        mouse.drag_timer.reset();
+                        entity.velocity = zm.f32x4(0, 0, 0, 0);
+                        entity.dragged = true;
                         break;
                     }
                 }
@@ -305,23 +357,23 @@ export fn input(ev: ?*const sapp.Event) void {
         },
         .MOUSE_UP => {
             if (mouse.dragging) |dragging| {
-                switch (dragging.data) {
-                    EntityType.card => |*data| {
-                        dragging.velocity = mouse.velocity;
-                        if (std.math.hypot(
-                            f32,
-                            dragging.position[0] - mouse.drag_start[0],
-                            dragging.position[1] - mouse.drag_start[1],
-                        ) < 50) {
-                            data.*.flipped = !data.flipped;
-                        }
-                    },
-                    else => {},
+                if (event.mouse_button == .LEFT) {
+                    dragging.dragged = false;
+                    switch (dragging.data) {
+                        EntityType.card => |*data| {
+                            dragging.velocity = mouse.velocity;
+                            if (std.math.hypot(
+                                f32,
+                                dragging.position[0] - mouse.drag_start[0],
+                                dragging.position[1] - mouse.drag_start[1],
+                            ) < 25 and mouse.drag_timer.read() < 5e8) {
+                                data.*.flipped = !data.flipped;
+                            }
+                        },
+                        else => {},
+                    }
+                    mouse.dragging = null;
                 }
-            }
-
-            if (event.mouse_button == .LEFT) {
-                mouse.dragging = null;
             }
         },
         .MOUSE_MOVE => {
@@ -363,6 +415,8 @@ pub fn main() !void {
         .height = 600,
         .window_title = "Cards",
         .logger = .{ .func = slog.func },
+        .sample_count = 4,
+        // .sample_count = 0,
     });
 }
 
@@ -372,9 +426,9 @@ fn glShaderDesc() sg.ShaderDesc {
     desc.attrs[1].name = "color0";
     desc.attrs[2].name = "texcoord0";
     desc.fs.images[0] = .{ .name = "tex", .image_type = ._2D };
-    desc.vs.uniform_blocks[0].size = 64;
-    desc.vs.uniform_blocks[0].uniforms[0].name = "mvp";
-    desc.vs.uniform_blocks[0].uniforms[0].type = .MAT4;
+    // desc.vs.uniform_blocks[0].size = 64;
+    // desc.vs.uniform_blocks[0].uniforms[0].name = "mvp";
+    // desc.vs.uniform_blocks[0].uniforms[0].type = .MAT4;
     desc.vs.source = @embedFile("./shaders/vs.glsl");
     desc.fs.source = @embedFile("./shaders/fs.glsl");
 
