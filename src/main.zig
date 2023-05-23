@@ -320,7 +320,7 @@ fn renderEntity(entity: Entity) void {
                         .x = entity.position[0] + sapp.widthf() / 2 - entity.size[0] / 2 + 8,
                         .y = -entity.position[1] + sapp.heightf() / 2 - entity.size[1] / 2 + 8,
                     },
-                    color,
+                    color.toImColor(),
                     &num[0],
                     &num[num.len],
                 );

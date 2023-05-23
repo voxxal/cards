@@ -1,5 +1,6 @@
 const zstbi = @import("zstbi");
 const sg = @import("sokol").gfx;
+const Color = @import("./color.zig").Color;
 
 pub const root = "/assets";
 
@@ -30,5 +31,7 @@ pub fn loadAssets() void {
     spades = loadImage("./assets/spades.png", .{ .width = 64, .height = 64 });
 }
 
-pub const suit_black: u32 = 0xff2e2a23;
-pub const suit_red: u32 = 0xff5255f8;
+pub const suit_black: Color = Color.rgb255(0x5c, 0x6a, 0x72);
+// pub const suit_black: u32 = 0xff2e2a23;
+pub const suit_red: Color = Color.rgb255(0xf8, 0x55, 0x52);
+// pub const suit_red: u32 = 0xff5255f8;
