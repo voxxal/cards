@@ -37,4 +37,8 @@ pub const Color = packed struct {
             @floatToInt(u32, self.b * 255) << 16 |
             @floatToInt(u32, self.a * 255) << 24;
     }
+
+    pub fn toArr(self: Color) [4]f32 {
+        return .{ self.r, self.g, self.b, self.a };
+    }
 };

@@ -4,7 +4,9 @@ const ArrayList = std.ArrayList; // TODO convert to MultiArrayList
 const sokol = @import("sokol");
 const zstbi = @import("zstbi");
 const zm = @import("zmath");
+const Vec2 = @import("./vec2.zig").Vec2;
 const assets = @import("./assets.zig");
+const Color = @import("./color.zig").Color;
 const sg = sokol.gfx;
 const sapp = sokol.app;
 const sgapp = sokol.app_gfx_glue;
@@ -70,17 +72,17 @@ const Mouse = struct {
     drag_timer: time.Timer = undefined,
 };
 
-const Vertex = extern struct {
-    position: [4]f32,
-    tint: [4]f32,
-    tex: [2]f32,
+const Vertex = packed struct {
+    position: zm.Vec,
+    tint: Color,
+    tex: Vec2,
 };
 
 const State = struct {
     gfx: struct {
         bind: sg.Bindings = .{},
         quad_batch: [1024]Vertex = [_]Vertex{undefined} ** 1024,
-        quad_batch_index: u32 = 0,
+        quad_batch_index: u16 = 0,
         quad_batch_index_buf: [1024 * 3 / 2]u16 = [_]u16{0} ** (1024 * 3 / 2),
         quad_batch_index_buf_index: u32 = 0,
         quad_batch_tex: sg.Image = .{ .id = 0 },
@@ -112,7 +114,7 @@ fn flushQuadBatch() void {
     gfx.quad_batch_index_buf_index = 0;
 }
 
-fn pushQuad(mvp: zm.Mat, texture: sg.Image, tint: [4]f32) void {
+fn pushQuad(mvp: zm.Mat, texture: sg.Image, tint: Color) void {
     if (texture.id != state.gfx.quad_batch_tex.id) {
         flushQuadBatch();
     }
@@ -121,18 +123,18 @@ fn pushQuad(mvp: zm.Mat, texture: sg.Image, tint: [4]f32) void {
     const tr = zm.mul(zm.f32x4(0.5, 0.5, 0.5, 1), mvp);
     const bl = zm.mul(zm.f32x4(-0.5, -0.5, 0.5, 1), mvp);
     const br = zm.mul(zm.f32x4(0.5, -0.5, 0.5, 1), mvp);
-    state.gfx.quad_batch[state.gfx.quad_batch_index + 0] = Vertex{ .position = zm.vecToArr4(tl), .tint = tint, .tex = .{ 0, 1 } };
-    state.gfx.quad_batch[state.gfx.quad_batch_index + 1] = Vertex{ .position = zm.vecToArr4(tr), .tint = tint, .tex = .{ 1, 1 } };
-    state.gfx.quad_batch[state.gfx.quad_batch_index + 2] = Vertex{ .position = zm.vecToArr4(bl), .tint = tint, .tex = .{ 0, 0 } };
-    state.gfx.quad_batch[state.gfx.quad_batch_index + 3] = Vertex{ .position = zm.vecToArr4(br), .tint = tint, .tex = .{ 1, 0 } };
-    state.gfx.quad_batch_index += 4;
+    state.gfx.quad_batch[state.gfx.quad_batch_index + 0] = Vertex{ .position = zm.vecToArr4(tl), .tint = tint, .tex = Vec2.init(0, 1) };
+    state.gfx.quad_batch[state.gfx.quad_batch_index + 1] = Vertex{ .position = zm.vecToArr4(tr), .tint = tint, .tex = Vec2.init(1, 1) };
+    state.gfx.quad_batch[state.gfx.quad_batch_index + 2] = Vertex{ .position = zm.vecToArr4(bl), .tint = tint, .tex = Vec2.init(0, 0) };
+    state.gfx.quad_batch[state.gfx.quad_batch_index + 3] = Vertex{ .position = zm.vecToArr4(br), .tint = tint, .tex = Vec2.init(1, 0) };
 
-    state.gfx.quad_batch_index_buf[state.gfx.quad_batch_index_buf_index + 0] = 0;
-    state.gfx.quad_batch_index_buf[state.gfx.quad_batch_index_buf_index + 1] = 1;
-    state.gfx.quad_batch_index_buf[state.gfx.quad_batch_index_buf_index + 2] = 2;
-    state.gfx.quad_batch_index_buf[state.gfx.quad_batch_index_buf_index + 3] = 1;
-    state.gfx.quad_batch_index_buf[state.gfx.quad_batch_index_buf_index + 4] = 2;
-    state.gfx.quad_batch_index_buf[state.gfx.quad_batch_index_buf_index + 5] = 3;
+    state.gfx.quad_batch_index_buf[state.gfx.quad_batch_index_buf_index + 0] = state.gfx.quad_batch_index + 0;
+    state.gfx.quad_batch_index_buf[state.gfx.quad_batch_index_buf_index + 1] = state.gfx.quad_batch_index + 1;
+    state.gfx.quad_batch_index_buf[state.gfx.quad_batch_index_buf_index + 2] = state.gfx.quad_batch_index + 2;
+    state.gfx.quad_batch_index_buf[state.gfx.quad_batch_index_buf_index + 3] = state.gfx.quad_batch_index + 1;
+    state.gfx.quad_batch_index_buf[state.gfx.quad_batch_index_buf_index + 4] = state.gfx.quad_batch_index + 2;
+    state.gfx.quad_batch_index_buf[state.gfx.quad_batch_index_buf_index + 5] = state.gfx.quad_batch_index + 3;
+    state.gfx.quad_batch_index += 4;
     state.gfx.quad_batch_index_buf_index += 6;
 }
 
@@ -174,9 +176,10 @@ export fn init() void {
         .shader = shd,
         .blend_color = .{ .r = 1, .g = 0, .b = 0, .a = 1 },
     };
-    pip_desc.layout.attrs[0].format = .FLOAT4;
-    pip_desc.layout.attrs[1].format = .FLOAT4;
-    pip_desc.layout.attrs[2].format = .FLOAT2;
+
+    pip_desc.layout.attrs[0].format = .FLOAT4; // 16
+    pip_desc.layout.attrs[1].format = .FLOAT4; // 16
+    pip_desc.layout.attrs[2].format = .FLOAT2; // 8
     pip_desc.colors[0].blend = .{
         .enabled = true,
         .src_factor_rgb = .SRC_ALPHA,
@@ -249,7 +252,6 @@ export fn frame() void {
     sg.commit();
 }
 
-// TODO it would be more efficent to batch all of the card draws at the same time
 fn renderEntity(entity: Entity) void {
     switch (entity.data) {
         EntityType.card => |data| {
@@ -260,29 +262,29 @@ fn renderEntity(entity: Entity) void {
                 outline_model = zm.mul(outline_model, zm.translationV(entity.position));
 
                 const mvp = zm.mul(outline_model, state.gfx.projection);
-                pushQuad(mvp, assets.card_outline, .{ 0x3ap0 / 0xffp0, 0x94p0 / 0xffp0, 0xc5p0 / 0xffp0, 1 });
+                pushQuad(mvp, assets.card_outline, assets.colors.blue);
             }
 
+            var card_model = zm.scalingV(entity.size);
+
+            card_model = zm.mul(card_model, zm.rotationZ(entity.rotation));
+            card_model = zm.mul(card_model, zm.translationV(entity.position));
+
+            const card_mvp = zm.mul(card_model, state.gfx.projection);
+
+            pushQuad(card_mvp, assets.card, assets.colors.bg_dim);
+
             if (data.flipped) {
-                var card_model = zm.scalingV(entity.size);
+                var back_model = zm.scalingV(zm.f32x4(entity.size[0] - 8, entity.size[1] - 8, entity.size[2], entity.size[3]));
 
-                card_model = zm.mul(card_model, zm.rotationZ(entity.rotation));
-                card_model = zm.mul(card_model, zm.translationV(entity.position));
+                back_model = zm.mul(back_model, zm.rotationZ(entity.rotation));
+                back_model = zm.mul(back_model, zm.translationV(entity.position));
 
-                const card_mvp = zm.mul(card_model, state.gfx.projection);
+                const mvp = zm.mul(back_model, state.gfx.projection);
 
-                pushQuad(card_mvp, assets.card_back, .{ 1, 1, 1, 1 });
+                pushQuad(mvp, assets.card_back, assets.colors.black);
+                pushQuad(mvp, assets.card_back_lines, assets.colors.white);
             } else {
-                // render base card
-                var card_model = zm.scalingV(entity.size);
-
-                card_model = zm.mul(card_model, zm.rotationZ(entity.rotation));
-                card_model = zm.mul(card_model, zm.translationV(entity.position));
-
-                const card_mvp = zm.mul(card_model, state.gfx.projection);
-
-                pushQuad(card_mvp, assets.card, .{ 1, 1, 1, 1 });
-
                 // render glyph
                 var glyph_max = std.math.min(entity.size[0], entity.size[1]);
                 var glyph_model = zm.scaling(glyph_max / 3, glyph_max / 3, 0);
@@ -290,12 +292,17 @@ fn renderEntity(entity: Entity) void {
                 glyph_model = zm.mul(glyph_model, zm.translationV(entity.position));
                 const glyph_mvp = zm.mul(glyph_model, state.gfx.projection);
 
+                const color = switch (data.id.suit) {
+                    Suit.diamonds, Suit.hearts => assets.colors.red,
+                    Suit.clubs, Suit.spades => assets.colors.black,
+                };
+
                 pushQuad(glyph_mvp, switch (data.id.suit) {
                     Suit.clubs => assets.clubs,
                     Suit.diamonds => assets.diamonds,
                     Suit.hearts => assets.hearts,
                     Suit.spades => assets.spades,
-                }, .{ 1, 1, 1, 1 });
+                }, color);
 
                 // render numbers
                 const draw_list = simgui.igGetWindowDrawList();
@@ -307,11 +314,6 @@ fn renderEntity(entity: Entity) void {
                     12 => "Q",
                     13 => "K",
                     else => "B",
-                };
-
-                const color = switch (data.id.suit) {
-                    Suit.diamonds, Suit.hearts => assets.suit_red,
-                    Suit.clubs, Suit.spades => assets.suit_black,
                 };
 
                 simgui.ImDrawList_AddText_Vec2(
