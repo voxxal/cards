@@ -85,6 +85,8 @@ const State = struct {
         fons: sfons.Context = undefined,
         font_normal: i32 = -1,
         font_bold: i32 = -1,
+        font_bind: sg.Bindings = .{},
+        font_pip: sg.Pipeline = .{},
         bind: sg.Bindings = .{},
         quad_batch: [1024]Vertex = [_]Vertex{undefined} ** 1024,
         quad_batch_index: u16 = 0,
@@ -123,6 +125,7 @@ fn pushQuad(mvp: zm.Mat, texture: sg.Image, tint: Color) void {
     if (texture.id != state.gfx.quad_batch_tex.id) {
         flushQuadBatch();
     }
+
     state.gfx.quad_batch_tex = texture;
     const tl = zm.mul(zm.f32x4(-0.5, 0.5, 0.5, 1), mvp);
     const tr = zm.mul(zm.f32x4(0.5, 0.5, 0.5, 1), mvp);
@@ -162,14 +165,14 @@ export fn init() void {
     simgui.setup(.{});
     state.gfx.bind.vertex_buffers[0] = sg.makeBuffer(.{
         .usage = .STREAM,
-        .size = 1024 * 700,
+        .size = 1024 * 11400,
         .label = "quad-vertices",
     });
 
     state.gfx.bind.index_buffer = sg.makeBuffer(.{
         .type = .INDEXBUFFER,
         .usage = .STREAM,
-        .size = 1024 * 700,
+        .size = 1024 * 11400,
     });
 
     state.gfx.bind.fs_images[0] = assets.card;
@@ -198,29 +201,27 @@ export fn init() void {
         .clear_value = .{ .r = 0xfdp0 / 0xffp0, .g = 0xf6p0 / 0xffp0, .b = 0xe3p0 / 0xffp0, .a = 1 },
     };
 
-    state.world.entities.append(Entity{
-        .position = zm.f32x4s(0),
-        .rotation = 0,
-        .size = zm.f32x4(125, 175, 0, 0),
-        .data = .{
-            .card = .{
-                .id = .{ .suit = Suit.hearts, .rank = 2 },
-                .flipped = false,
-            },
-        },
-    }) catch unreachable;
-
-    state.world.entities.append(Entity{
-        .position = zm.f32x4s(0),
-        .rotation = 0,
-        .size = zm.f32x4(125, 175, 0, 0),
-        .data = .{
-            .card = .{
-                .id = .{ .suit = Suit.clubs, .rank = 13 },
-                .flipped = false,
-            },
-        },
-    }) catch unreachable;
+    const suits = [4]Suit{ .spades, .clubs, .diamonds, .hearts };
+    for (suits) |suit| {
+        var rank: u4 = 1;
+        while (rank <= 13) {
+            state.world.entities.append(Entity{
+                .position = zm.f32x4s(0),
+                .rotation = 0,
+                .size = zm.f32x4(125, 175, 0, 0),
+                .data = .{
+                    .card = .{
+                        .id = .{ .suit = suit, .rank = @as(u4, rank) },
+                        .flipped = true,
+                    },
+                },
+            }) catch unreachable;
+            rank += 1;
+        }
+    }
+    const seed = @truncate(u64, @bitCast(u128, std.time.nanoTimestamp()));
+    var prng = std.rand.DefaultPrng.init(seed);
+    prng.random().shuffle(Entity, state.world.entities.items);
 
     state.gfx.projection = zm.orthographicRhGl(sapp.widthf(), sapp.heightf(), -1, 100);
     state.input.mouse.drag_timer = time.Timer.start() catch @panic("timer not supported");
@@ -237,11 +238,6 @@ export fn frame() void {
         .delta_time = sapp.frameDuration(),
         .dpi_scale = sapp.dpiScale(),
     });
-    simgui.igSetNextWindowBgAlpha(0);
-    simgui.igSetNextWindowPos(simgui.ImVec2{ .x = 0, .y = 0 }, 0, simgui.ImVec2{ .x = 0, .y = 0 });
-    simgui.igSetNextWindowSize(simgui.ImVec2{ .x = sapp.widthf(), .y = sapp.heightf() }, 0);
-    _ = simgui.igBegin("Window", null, 1 + 2 + 4 + 8 + 256 + 786944); // NoTitleBar|NoResize|NoMove|NoScrollbar|NoSavedSettings|NoInputs
-
     sg.beginDefaultPassf(state.gfx.pass_action, sapp.widthf(), sapp.heightf());
     sg.applyPipeline(state.gfx.pip);
     sg.applyBindings(state.gfx.bind);
@@ -264,7 +260,6 @@ export fn frame() void {
         i += 1;
     }
     flushQuadBatch();
-    simgui.igEnd();
     simgui.render();
     sg.endPass();
     sg.commit();
@@ -392,6 +387,23 @@ fn renderEntity(entity: Entity, i: i32) void {
     }
 }
 
+// pub fn moveToEnd(array: ArrayList(Entity).Slice, index: usize) void {
+//     var left: usize = 0;
+//     var right: usize = array.len - 1;
+
+//     while (left < right) {
+//         while (left < right and right == index) {
+//             right -= 1;
+//         }
+
+//         if (index == index) {
+//             std.mem.swap(Entity, &array[left], &array[right]);
+//         }
+
+//         left += 1;
+//     }
+// }
+
 export fn input(ev: ?*const sapp.Event) void {
     const event = ev.?;
     var mouse = &state.input.mouse;
@@ -403,6 +415,8 @@ export fn input(ev: ?*const sapp.Event) void {
                     i -= 1;
                     const entity: *Entity = &state.world.entities.items[i];
                     if (entity.collider.contains(mouse.position)) {
+                        // moveToEnd(state.world.entities.items, i);
+                        // const new_ptr: *Entity = &state.world.entities.items[state.world.entities.items.len - 1];
                         mouse.dragging = entity;
                         mouse.drag_start = entity.position;
                         mouse.drag_timer.reset();
