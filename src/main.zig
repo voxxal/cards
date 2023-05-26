@@ -387,23 +387,6 @@ fn renderEntity(entity: Entity, i: i32) void {
     }
 }
 
-// pub fn moveToEnd(array: ArrayList(Entity).Slice, index: usize) void {
-//     var left: usize = 0;
-//     var right: usize = array.len - 1;
-
-//     while (left < right) {
-//         while (left < right and right == index) {
-//             right -= 1;
-//         }
-
-//         if (index == index) {
-//             std.mem.swap(Entity, &array[left], &array[right]);
-//         }
-
-//         left += 1;
-//     }
-// }
-
 export fn input(ev: ?*const sapp.Event) void {
     const event = ev.?;
     var mouse = &state.input.mouse;
@@ -415,13 +398,14 @@ export fn input(ev: ?*const sapp.Event) void {
                     i -= 1;
                     const entity: *Entity = &state.world.entities.items[i];
                     if (entity.collider.contains(mouse.position)) {
-                        // moveToEnd(state.world.entities.items, i);
-                        // const new_ptr: *Entity = &state.world.entities.items[state.world.entities.items.len - 1];
-                        mouse.dragging = entity;
-                        mouse.drag_start = entity.position;
+                        // memory inefficent? what???
+                        state.world.entities.append(state.world.entities.orderedRemove(i)) catch unreachable;
+                        const new = &state.world.entities.items[state.world.entities.items.len - 1];
+                        mouse.dragging = new;
+                        mouse.drag_start = new.position;
                         mouse.drag_timer.reset();
-                        entity.velocity = zm.f32x4(0, 0, 0, 0);
-                        entity.dragged = true;
+                        new.velocity = zm.f32x4(0, 0, 0, 0);
+                        new.dragged = true;
                         break;
                     }
                 }
