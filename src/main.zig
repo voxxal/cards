@@ -85,8 +85,6 @@ const State = struct {
         fons: sfons.Context = undefined,
         font_normal: i32 = -1,
         font_bold: i32 = -1,
-        font_bind: sg.Bindings = .{},
-        font_pip: sg.Pipeline = .{},
         bind: sg.Bindings = .{},
         quad_batch: [1024]Vertex = [_]Vertex{undefined} ** 1024,
         quad_batch_index: u16 = 0,
@@ -162,12 +160,6 @@ export fn init() void {
     state.gfx.font_bold = state.gfx.fons.addFont("sans-bold", "./assets/fonts/Inter-Bold.ttf") catch @panic("failed to load font");
 
     simgui.setup(.{});
-    state.gfx.font_bind.vertex_buffers[0] = sg.makeBuffer(.{
-        .usage = .STREAM,
-        .size = 1024 * 700,
-    });
-    state.gfx.font_bind.fs_images[0] = assets.card;
-
     state.gfx.bind.vertex_buffers[0] = sg.makeBuffer(.{
         .usage = .STREAM,
         .size = 1024 * 700,
@@ -183,24 +175,6 @@ export fn init() void {
     state.gfx.bind.fs_images[0] = assets.card;
 
     const shd = sg.makeShader(glShaderDesc());
-
-    {
-        var pip_desc: sg.PipelineDesc = .{
-            .shader = shd,
-            .blend_color = .{ .r = 1, .g = 0, .b = 0, .a = 1 },
-        };
-
-        pip_desc.layout.attrs[0].format = .FLOAT4; // 16
-        pip_desc.layout.attrs[1].format = .FLOAT4; // 16
-        pip_desc.layout.attrs[2].format = .FLOAT2; // 8
-        pip_desc.colors[0].blend = .{
-            .enabled = true,
-            .src_factor_rgb = .SRC_ALPHA,
-            .dst_factor_rgb = .ONE_MINUS_SRC_ALPHA,
-        };
-
-        state.gfx.font_pip = sg.makePipeline(pip_desc);
-    }
 
     var pip_desc: sg.PipelineDesc = .{
         .index_type = .UINT16,
@@ -393,8 +367,9 @@ fn renderEntity(entity: Entity, i: i32) void {
                 //     else => "B",
                 // };
 
-                sg.applyPipeline(state.gfx.font_pip);
-                sg.applyBindings(state.gfx.font_bind);
+                sgl.defaults();
+                sgl.matrixModeProjection();
+                sgl.ortho(0, sapp.widthf(), sapp.heightf(), 0, -1, 1);
                 sgl.drawLayer(i);
                 sg.applyPipeline(state.gfx.pip);
                 sg.applyBindings(state.gfx.bind);
