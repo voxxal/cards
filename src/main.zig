@@ -9,10 +9,12 @@ const assets = @import("./assets.zig");
 const Color = @import("./color.zig").Color;
 const sg = sokol.gfx;
 const sapp = sokol.app;
+const sgl = sokol.gl;
 const sgapp = sokol.app_gfx_glue;
 const saudio = sokol.audio;
 const slog = sokol.log;
 const simgui = sokol.imgui;
+const sfons = sokol.fontstash;
 
 var manager = std.heap.GeneralPurposeAllocator(.{}){};
 const allocator = manager.allocator();
@@ -80,6 +82,11 @@ const Vertex = packed struct {
 
 const State = struct {
     gfx: struct {
+        fons: sfons.Context = undefined,
+        font_normal: i32 = -1,
+        font_bold: i32 = -1,
+        font_bind: sg.Bindings = .{},
+        font_pip: sg.Pipeline = .{},
         bind: sg.Bindings = .{},
         quad_batch: [1024]Vertex = [_]Vertex{undefined} ** 1024,
         quad_batch_index: u16 = 0,
@@ -143,16 +150,23 @@ export fn init() void {
         .context = sgapp.context(),
         .logger = .{ .func = slog.func },
     });
+    sgl.setup(.{ .logger = .{ .func = slog.func } });
     assets.loadAssets();
 
-    simgui.setup(.{});
+    var fons_context = sfons.create(.{
+        .width = 512,
+        .height = 512,
+    });
+    state.gfx.fons = fons_context;
+    state.gfx.font_normal = state.gfx.fons.addFont("sans", "./assets/fonts/Inter-Regular.ttf") catch @panic("failed to load font");
+    state.gfx.font_bold = state.gfx.fons.addFont("sans-bold", "./assets/fonts/Inter-Bold.ttf") catch @panic("failed to load font");
 
-    // state.gfx.bind.vertex_buffers[0] = sg.makeBuffer(.{ .data = sg.asRange(&[_]f32{
-    //     -0.5, 0.5,  0.5, 1, 1, 1, 1, 0, 1,
-    //     0.5,  0.5,  0.5, 1, 1, 1, 1, 1, 1,
-    //     -0.5, -0.5, 0.5, 1, 1, 1, 1, 0, 0,
-    //     0.5,  -0.5, 0.5, 1, 1, 1, 1, 1, 0,
-    // }) });
+    simgui.setup(.{});
+    state.gfx.font_bind.vertex_buffers[0] = sg.makeBuffer(.{
+        .usage = .STREAM,
+        .size = 1024 * 700,
+    });
+    state.gfx.font_bind.fs_images[0] = assets.card;
 
     state.gfx.bind.vertex_buffers[0] = sg.makeBuffer(.{
         .usage = .STREAM,
@@ -164,12 +178,29 @@ export fn init() void {
         .type = .INDEXBUFFER,
         .usage = .STREAM,
         .size = 1024 * 700,
-        // .data = sg.asRange(&[_]u16{ 0, 1, 2, 1, 2, 3 }),
     });
 
     state.gfx.bind.fs_images[0] = assets.card;
 
     const shd = sg.makeShader(glShaderDesc());
+
+    {
+        var pip_desc: sg.PipelineDesc = .{
+            .shader = shd,
+            .blend_color = .{ .r = 1, .g = 0, .b = 0, .a = 1 },
+        };
+
+        pip_desc.layout.attrs[0].format = .FLOAT4; // 16
+        pip_desc.layout.attrs[1].format = .FLOAT4; // 16
+        pip_desc.layout.attrs[2].format = .FLOAT2; // 8
+        pip_desc.colors[0].blend = .{
+            .enabled = true,
+            .src_factor_rgb = .SRC_ALPHA,
+            .dst_factor_rgb = .ONE_MINUS_SRC_ALPHA,
+        };
+
+        state.gfx.font_pip = sg.makePipeline(pip_desc);
+    }
 
     var pip_desc: sg.PipelineDesc = .{
         .index_type = .UINT16,
@@ -188,9 +219,9 @@ export fn init() void {
 
     state.gfx.pip = sg.makePipeline(pip_desc);
     state.gfx.pass_action.colors[0] = .{
-        .action = .CLEAR,
+        .load_action = .CLEAR,
         //FDF6E3
-        .value = .{ .r = 0xfdp0 / 0xffp0, .g = 0xf6p0 / 0xffp0, .b = 0xe3p0 / 0xffp0, .a = 1 },
+        .clear_value = .{ .r = 0xfdp0 / 0xffp0, .g = 0xf6p0 / 0xffp0, .b = 0xe3p0 / 0xffp0, .a = 1 },
     };
 
     state.world.entities.append(Entity{
@@ -222,6 +253,10 @@ export fn init() void {
 }
 
 export fn frame() void {
+    sgl.defaults();
+    sgl.matrixModeProjection();
+    sgl.ortho(0, sapp.widthf(), sapp.heightf(), 0, -1, 1);
+    state.gfx.fons.clearState();
     simgui.newFrame(.{
         .width = sapp.width(),
         .height = sapp.height(),
@@ -232,9 +267,17 @@ export fn frame() void {
     simgui.igSetNextWindowPos(simgui.ImVec2{ .x = 0, .y = 0 }, 0, simgui.ImVec2{ .x = 0, .y = 0 });
     simgui.igSetNextWindowSize(simgui.ImVec2{ .x = sapp.widthf(), .y = sapp.heightf() }, 0);
     _ = simgui.igBegin("Window", null, 1 + 2 + 4 + 8 + 256 + 786944); // NoTitleBar|NoResize|NoMove|NoScrollbar|NoSavedSettings|NoInputs
-    sg.beginDefaultPass(state.gfx.pass_action, sapp.width(), sapp.height());
+
+    sg.beginDefaultPassf(state.gfx.pass_action, sapp.widthf(), sapp.heightf());
     sg.applyPipeline(state.gfx.pip);
     sg.applyBindings(state.gfx.bind);
+    var i: i32 = 0;
+    for (state.world.entities.items) |*entity| {
+        buildFontTextures(entity.*, i);
+        i += 1;
+    }
+    sfons.flush(state.gfx.fons);
+    i = 0;
     for (state.world.entities.items) |*entity| {
         entity.collider.tl = zm.f32x4(-(entity.size[0] / 2) + entity.position[0], entity.size[1] / 2 + entity.position[1], 0, 0);
         entity.collider.br = zm.f32x4(entity.size[0] / 2 + entity.position[0], -(entity.size[1] / 2) + entity.position[1], 0, 0);
@@ -243,7 +286,8 @@ export fn frame() void {
         entity.velocity[0] *= 0.65;
         entity.velocity[1] *= 0.65;
 
-        renderEntity(entity.*);
+        renderEntity(entity.*, i);
+        i += 1;
     }
     flushQuadBatch();
     simgui.igEnd();
@@ -252,7 +296,41 @@ export fn frame() void {
     sg.commit();
 }
 
-fn renderEntity(entity: Entity) void {
+fn buildFontTextures(entity: Entity, i: i32) void {
+    switch (entity.data) {
+        EntityType.card => |data| {
+            const color = switch (data.id.suit) {
+                Suit.diamonds, Suit.hearts => assets.colors.red,
+                Suit.clubs, Suit.spades => assets.colors.black,
+            };
+
+            const num = switch (data.id.rank) {
+                1 => "A",
+                2...9 => |v| &[_:0]u8{@as(u8, v) + '0'},
+                10 => "10",
+                11 => "J",
+                12 => "Q",
+                13 => "K",
+                else => "B",
+            };
+
+            if (state.gfx.font_normal != -1) {
+                sgl.layer(i);
+
+                state.gfx.fons.setSize(entity.size[0] / 4);
+                state.gfx.fons.setColor(color.toInt());
+                _ = state.gfx.fons.drawText(
+                    entity.position[0] + sapp.widthf() / 2 - entity.size[0] / 2 + 8,
+                    -entity.position[1] + sapp.heightf() / 2 - entity.size[1] / 2 + 8 + entity.size[0] / 6,
+                    num,
+                );
+            }
+        },
+        else => @panic("not impl"),
+    }
+}
+
+fn renderEntity(entity: Entity, i: i32) void {
     switch (entity.data) {
         EntityType.card => |data| {
             if (entity.dragged) {
@@ -305,27 +383,21 @@ fn renderEntity(entity: Entity) void {
                 }, color);
 
                 // render numbers
-                const draw_list = simgui.igGetWindowDrawList();
-                const num = switch (data.id.rank) {
-                    1 => "A",
-                    2...9 => |v| &[_:0]u8{@as(u8, v) + '0'},
-                    10 => "10",
-                    11 => "J",
-                    12 => "Q",
-                    13 => "K",
-                    else => "B",
-                };
+                // const num = switch (data.id.rank) {
+                //     1 => "A",
+                //     2...9 => |v| &[_:0]u8{@as(u8, v) + '0'},
+                //     10 => "10",
+                //     11 => "J",
+                //     12 => "Q",
+                //     13 => "K",
+                //     else => "B",
+                // };
 
-                simgui.ImDrawList_AddText_Vec2(
-                    draw_list,
-                    simgui.ImVec2{
-                        .x = entity.position[0] + sapp.widthf() / 2 - entity.size[0] / 2 + 8,
-                        .y = -entity.position[1] + sapp.heightf() / 2 - entity.size[1] / 2 + 8,
-                    },
-                    color.toImColor(),
-                    &num[0],
-                    &num[num.len],
-                );
+                sg.applyPipeline(state.gfx.font_pip);
+                sg.applyBindings(state.gfx.font_bind);
+                sgl.drawLayer(i);
+                sg.applyPipeline(state.gfx.pip);
+                sg.applyBindings(state.gfx.bind);
             }
         },
         else => {
@@ -410,6 +482,7 @@ export fn input(ev: ?*const sapp.Event) void {
 
 export fn cleanup() void {
     sg.shutdown();
+    simgui.shutdown();
     zstbi.deinit();
 }
 
@@ -427,7 +500,6 @@ pub fn main() !void {
         .window_title = "Cards",
         .logger = .{ .func = slog.func },
         .sample_count = 4,
-        // .sample_count = 0,
     });
 }
 

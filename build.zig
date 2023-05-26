@@ -31,6 +31,7 @@ pub fn build(b: *std.Build) void {
     exe.linkLibrary(sokol_build);
     const sokol_path = "lib/sokol-zig/src/sokol/c/";
 
+    // Build imgui
     exe.addIncludePath(sokol_path ++ "imgui");
     exe.addSystemIncludePath(sokol_path ++ "imgui");
     exe.addIncludePath(sokol_path);

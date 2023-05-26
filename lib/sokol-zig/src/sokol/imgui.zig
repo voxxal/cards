@@ -59,10 +59,10 @@ pub fn render() void {
 
 pub extern fn simgui_map_keycode([*c]const sapp.Keycode) i32;
 pub fn mapKeycode(keycode: sapp.Keycode) i32 {
-    simgui_map_keycode(&keycode);
+    return simgui_map_keycode(&keycode);
 }
 
 pub extern fn simgui_handle_event([*c]const sapp.Event) bool;
 pub fn handleEvent(ev: sapp.Event) bool {
-    simgui_handle_event(&ev);
+    return simgui_handle_event(&ev);
 }

@@ -36,6 +36,7 @@ pub fn buildSokol(b: *Builder, target: CrossTarget, optimize: Mode, config: Conf
         "sokol_debugtext.c",
         "sokol_shape.c",
         "sokol_imgui.c",
+        "sokol_fontstash.c",
     };
     var _backend = config.backend;
     if (_backend == .auto) {

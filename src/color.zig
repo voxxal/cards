@@ -31,7 +31,7 @@ pub const Color = packed struct {
         };
     }
 
-    pub fn toImColor(self: Color) u32 {
+    pub fn toInt(self: Color) u32 {
         return @floatToInt(u32, self.r * 255) << 0 |
             @floatToInt(u32, self.g * 255) << 8 |
             @floatToInt(u32, self.b * 255) << 16 |
